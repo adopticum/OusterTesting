@@ -84,6 +84,59 @@ def stream_live(config,hostname = 'os-122107000535.local',lidar_port = 7502, imu
                 print(signal)
                 print(xyz)
                 break
+def convert_to_xyzr(xyz,signal):
+    """
+    Convert lidar data to xyzr.
+    @param xyz: numpy array of xyz data
+    @param signal: numpy array of signal data
+
+    @return: xyzr numpy array
+    """
+    xyzr = np.zeros((len(xyz),4))
+    xyzr[:,0:3] = xyz
+    xyzr[:,3] = signal
+    return xyzr
+def get_signal_reflection(scan):
+    """
+    Get signal reflection from scan.
+    @param scan: Scan object
+
+    @return: numpy array of signal reflection
+    """
+    return client.destagger(scan.metadata,
+                            scan.field(client.ChanField.REFLECTIVITY))
+def get_xyz(scan):
+    """
+    Get xyz data from scan.
+    @param scan: Scan object
+
+    @return: numpy array of xyz data
+    """
+    xyzlut = client.XYZLut(scan.metadata)
+    return xyzlut(scan)
+def remove_zeroes_from_xyzr(xyzr):
+    """
+    Remove zeroes from xyzr.
+    @param xyzr: numpy array of xyzr data
+
+    @return: numpy array of xyzr data
+    """
+    return xyzr[xyzr[:,0]!=0]
+
+def get_single_example():
+    """
+    Get a single example from the lidar data.
+
+    """
+    pcap_path = '/Users/theodorjonsson/GithubProjects/ExampleData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.pcap'
+    metadata_path = '/Users/theodorjonsson/GithubProjects/ExampleData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.json'
+    with open(metadata_path,'r')as file:
+        info = client.SensorInfo(file.read())
+    source = pcap.Pcap(pcap_path,info)
+    with closing(client.Scans(source)) as scans:
+        scan = nth(scans, 50) # Five second scan (50Rot/10Hz)
+    return scan,info
+    
 if __name__ == "__main__":
     config,hostname = sensor_config()
     print(f"Sensor hostname: {hostname}")
