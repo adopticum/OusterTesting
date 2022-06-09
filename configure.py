@@ -6,6 +6,8 @@ from more_itertools import time_limited,nth
 import numpy as np
 from timeit import default_timer as timer
 from datetime import datetime
+
+from torch import ge
 def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503): 
     """
     Set sensor configuration.
@@ -92,37 +94,61 @@ def convert_to_xyzr(xyz,signal):
 
     @return: xyzr numpy array
     """
-    xyzr = np.zeros((len(xyz),4))
-    xyzr[:,0:3] = xyz
-    xyzr[:,3] = signal
+    if xyz is None:
+        raise ValueError("xyz is None")
+    if signal is None:
+        raise ValueError("signal is None")
+    if len(xyz.shape) != 3:
+        print("xyz should be: (n_scans,n_points,3)")
+        xyz = np.expand_dims(xyz,axis=0)
+    if len(signal.shape) != 3:
+        print("Signals should be: (n_scans,n_points,1)")
+        signal = np.expand_dims(signal,axis=-1)
+    print("xyz.shape: {}".format(xyz.shape))
+    print("signal.shape: {}".format(signal.shape))
+    xyzr = np.concatenate((xyz,np.expand_dims(signal,-1)),axis=3)
     return xyzr
-def get_signal_reflection(scan):
+def get_signal_reflection(scan,source):
     """
     Get signal reflection from scan.
     @param scan: Scan object
+    @param source: Source of data
 
     @return: numpy array of signal reflection
     """
-    return client.destagger(scan.metadata,
+    if scan is None:
+        raise ValueError("scan is None")
+    if source is None:
+        raise ValueError("source is None")
+    return client.destagger(source.metadata,
                             scan.field(client.ChanField.REFLECTIVITY))
-def get_xyz(scan):
+def get_xyz(source):
     """
     Get xyz data from scan.
-    @param scan: Scan object
+    @param source: Source of data
 
     @return: numpy array of xyz data
     """
-    xyzlut = client.XYZLut(scan.metadata)
+    if source is None:
+        raise ValueError("source is None")
+    xyzlut = client.XYZLut(source.metadata)
     return xyzlut(scan)
-def remove_zeroes_from_xyzr(xyzr):
-    """
-    Remove zeroes from xyzr.
-    @param xyzr: numpy array of xyzr data
 
-    @return: numpy array of xyzr data
+def plot_lidar_example(xyz):
     """
-    return xyzr[xyzr[:,0]!=0]
-
+    Plot lidar example from xyz data.
+    @param xyz: numpy array of xyz data
+    """
+    [x, y, z] = [c.flatten() for c in np.dsplit(xyz, 3)]
+    ax = plt.axes(projection='3d')
+    r = 5
+    ax.set_xlim3d([-r, r])
+    ax.set_ylim3d([-r, r])
+    ax.set_zlim3d([-r/2, r/2])
+    plt.axis('off')
+    z_col = np.minimum(np.absolute(z), 5)
+    ax.scatter(x, y, z, c=z_col, s=0.2)
+    plt.show()
 def get_single_example():
     """
     Get a single example from the lidar data.
@@ -135,9 +161,11 @@ def get_single_example():
     source = pcap.Pcap(pcap_path,info)
     with closing(client.Scans(source)) as scans:
         scan = nth(scans, 50) # Five second scan (50Rot/10Hz)
-    return scan,info
-    
+    return scan,source
+
 if __name__ == "__main__":
-    config,hostname = sensor_config()
-    print(f"Sensor hostname: {hostname}")
-    stream_live(config,hostname)
+    scan,source = get_single_example()
+    xyz = get_xyz(source)
+    signal = get_signal_reflection(scan,source)
+    xyzr = convert_to_xyzr(xyz,signal)
+    plot_lidar_example(xyz)
