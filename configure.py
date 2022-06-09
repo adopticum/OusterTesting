@@ -6,15 +6,15 @@ from more_itertools import time_limited,nth
 import numpy as np
 from timeit import default_timer as timer
 from datetime import datetime
-"""
-Set sensor configuration.
-@param hostname: sensor hostname
-@param lidar_port: lidar port
-@param imu_port: imu port
-
-@return: Sensor Config Object.
-"""
 def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503): 
+    """
+    Set sensor configuration.
+    @param hostname: sensor hostname
+    @param lidar_port: lidar port
+    @param imu_port: imu port
+
+    @return: Sensor Config Object.
+    """
     # establish sensor connection
     config = client.SensorConfig()
     # set the values that you need: see sensor documentation for param meanings
@@ -46,14 +46,14 @@ def record_lidar(config,n_seconds = 2,hostname = 'os-122107000535.local',lidar_p
         source_it = time_limited(n_seconds, source)
         n_packets = pcap.record(source_it, f"{fname_base}.pcap")
         print(f"Captured {n_packets} packets")
-"""
-Stream Live from sensor belonging to hostname, given a specified config.
-@param config: SensorConfig object
-@param hostname: string
-@param lidar_port: int (default 7502)
-@param imu_port: int (default 7503)
-"""
 def stream_live(config,hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503):
+    """
+    Stream Live from sensor belonging to hostname, given a specified config.
+    @param config: SensorConfig object
+    @param hostname: string
+    @param lidar_port: int (default 7502)
+    @param imu_port: int (default 7503)
+    """
     if config is None:
         config = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
     # create a stream object
@@ -65,9 +65,10 @@ def stream_live(config,hostname = 'os-122107000535.local',lidar_port = 7502, imu
             # print("frame id: {} ".format(scan.frame_id))
             start = timer()
             signal = client.destagger(stream.metadata,
-                                        scan.field(client.ChanField.SIGNAL))
+                                        scan.field(client.ChanField.REFLECTIVITY))
             xyzlut = client.XYZLut(stream.metadata)
             xyz = xyzlut(scan)
+            print(np.shape(signal))
             print(np.shape(xyz))
             end = timer()
             # print(f"T: {end-start} s")
@@ -80,8 +81,10 @@ def stream_live(config,hostname = 'os-122107000535.local',lidar_port = 7502, imu
             #    show = False
             #    break
             if i>10:
+                print(signal)
+                print(xyz)
                 break
 if __name__ == "__main__":
     config,hostname = sensor_config()
     print(f"Sensor hostname: {hostname}")
-    record_lidar(config,3,hostname)
+    stream_live(config,hostname)
