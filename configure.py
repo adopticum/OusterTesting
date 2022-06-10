@@ -30,6 +30,15 @@ def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port
     return [config, hostname]
 
 def record_lidar(config,n_seconds = 2,hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503):
+    """
+    Record lidar data for n_seconds and save to local generated path..
+    @param config: SensorConfig object
+    @param n_seconds: int
+    @param hostname: string
+    @param lidar_port: int (default 7502)
+    @param imu_port: int (default 7503)
+
+    """
     if config is None:
         [config,_] = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
     # connect to sensor and record lidar/imu packets
@@ -154,13 +163,17 @@ def get_single_example():
     Get a single example from the lidar data.
 
     """
-    pcap_path = '/Users/theodorjonsson/GithubProjects/ExampleData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.pcap'
-    metadata_path = '/Users/theodorjonsson/GithubProjects/ExampleData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.json'
-    with open(metadata_path,'r')as file:
+    metadata_path = "/Users/theodorjonsson/GithubProjects/ExampleData/OS-0-64-U02_122107000535_1024x10_20220608_163248.json"
+    pcap_path = "/Users/theodorjonsson/GithubProjects/ExampleData/OS-0-64-U02_122107000535_1024x10_20220608_163248.pcap"
+    #pcap_path = '/Users/theodorjonsson/GithubProjects/ExampleData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.pcap'
+    #metadata_path = '/Users/theodorjonsson/GithubProjects/ExampleData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.json'
+    with open(metadata_path,'r') as file:
         info = client.SensorInfo(file.read())
+    print(info)
     source = pcap.Pcap(pcap_path,info)
     with closing(client.Scans(source)) as scans:
         scan = nth(scans, 50) # Five second scan (50Rot/10Hz)
+    print(scan)
     return scan,source
 
 if __name__ == "__main__":
