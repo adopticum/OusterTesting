@@ -66,22 +66,12 @@ def stream_live(config,hostname = 'os-122107000535.local',lidar_port = 7502, imu
             # uncomment if you'd like to see frame id printed
             # print("frame id: {} ".format(scan.frame_id))
             start = timer()
-            signal = client.destagger(stream.metadata,
-                                        scan.field(client.ChanField.REFLECTIVITY))
             xyzlut = client.XYZLut(stream.metadata)
-            xyz = xyzlut(scan)
-            print(np.shape(signal))
-            print(np.shape(xyz))
+            signal = get_signal_reflection(scan,stream)
+            xyz = get_xyz(stream)
+            xyzr = convert_to_xyzr(xyz,signal)
             end = timer()
             # print(f"T: {end-start} s")
-            #signal = (signal / np.max(signal) * 255).astype(np.uint8)
-            #cv2.imshow("scaled signal", signal)
-            #key = cv2.waitKey(1) & 0xFF
-                # [doc-etag-live-plot-signal]
-                # 27 is esc
-            #if key == 27:
-            #    show = False
-            #    break
             if i>10:
                 print(signal)
                 print(xyz)
@@ -95,18 +85,24 @@ def convert_to_xyzr(xyz,signal):
     @return: xyzr numpy array
     """
     if xyz is None:
-        raise ValueError("xyz is None")
+        raise ValueError("xyz is None before concatenation with signal.")
     if signal is None:
-        raise ValueError("signal is None")
-    if len(xyz.shape) != 3:
-        print("xyz should be: (n_scans,n_points,3)")
+        raise ValueError("signal is None before concatenation with xyz.")
+    if len(xyz.shape) < 4:
+        print("xyz should be: (bs, n_scans, n_points,3)")
         xyz = np.expand_dims(xyz,axis=0)
-    if len(signal.shape) != 3:
-        print("Signals should be: (n_scans,n_points,1)")
+        # If xyz is not a 3D array then signal isnt expand it to (1, n_scans, n_points)
+        signal = np.expand_dims(signal,axis=0)
+    if len(signal.shape) < 4:
+        #"Signals should same as xyz except final dim: (bs, n_scans, n_points, 1)")
         signal = np.expand_dims(signal,axis=-1)
     print("xyz.shape: {}".format(xyz.shape))
     print("signal.shape: {}".format(signal.shape))
-    xyzr = np.concatenate((xyz,np.expand_dims(signal,-1)),axis=3)
+    try:
+        xyzr = np.concatenate((xyz,signal),axis=-1)
+    except:
+        print("Different shapes for xyz and signal. xyz: {}, signal: {}".format(xyz.shape,signal.shape))
+        return None
     return xyzr
 def get_signal_reflection(scan,source):
     """
@@ -120,8 +116,12 @@ def get_signal_reflection(scan,source):
         raise ValueError("scan is None")
     if source is None:
         raise ValueError("source is None")
-    return client.destagger(source.metadata,
+    try:
+        return client.destagger(source.metadata,
                             scan.field(client.ChanField.REFLECTIVITY))
+    except:
+        print("Error getting signal reflection")
+        return None
 def get_xyz(source):
     """
     Get xyz data from scan.
