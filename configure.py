@@ -1,3 +1,4 @@
+from antigravity import geohash
 from ouster import client, pcap
 from contextlib import closing
 import cv2
@@ -5,6 +6,7 @@ import matplotlib.pyplot as plt
 from more_itertools import time_limited,nth
 import numpy as np
 from timeit import default_timer as timer
+import time
 from datetime import datetime
 import open3d as o3d
 
@@ -116,14 +118,13 @@ def convert_to_xyzr(xyz,signal):
         print("Different shapes for xyz and signal. xyz: {}, signal: {}".format(xyz.shape,signal.shape))
         return None
     return xyzr
-def compress_mid_dim_xyz(xyz):
+def compress_mid_dim(data):
     """
-    Compress mid dim of xyz to create (bs,n_points,3 or 4).
-    @param xyz: numpy array of xyz data (bs, channels, beams, 3 or 4)
+    Compress mid dim of xyz,xyzr or signal to create (bs,n_points, 1 3 or 4).
     """
-    if len(xyz.shape) < 4:
-        raise ValueError(f"xyz should be: (bs, channels, beams, 3 or 4). got {xyz.shape}.")
-    return xyz.reshape(xyz.shape[0],-1,xyz.shape[-1])
+    if len(data.shape) < 4:
+        raise ValueError(f"xyz should be: (bs, channels, beams, 3 or 4). got {data.shape}.")
+    return data.reshape(data.shape[0],-1,data.shape[-1])
 
 def get_signal_reflection(scan,source):
     """
@@ -138,8 +139,8 @@ def get_signal_reflection(scan,source):
     if source is None:
         raise ValueError("source is None")
     try:
-        return client.destagger(source.metadata,
-                            scan.field(client.ChanField.REFLECTIVITY))
+        return np.expand_dims(client.destagger(source.metadata,
+                            scan.field(client.ChanField.REFLECTIVITY)),0)
     except:
         print("Error getting signal reflection")
         return None
@@ -181,26 +182,36 @@ def get_single_example():
     #metadata_path = '/Users/theodorjonsson/GithubProjects/ExampleData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.json'
     with open(metadata_path,'r') as file:
         info = client.SensorInfo(file.read())
-    print(info)
     source = pcap.Pcap(pcap_path,info)
     with closing(client.Scans(source)) as scans:
         scan = nth(scans, 50) # Five second scan (50Rot/10Hz)
-    print(scan)
     return scan,source
-def plot_open3d_pc(xyz):
+def plot_open3d_pc(xyzr):
     """
     Plot lidar example from xyz data.
-    @param xyz: numpy array of xyz data
+    @param xyzr: numpy array of xyzr data. Each cloud is stacked in dim=0. Iterate over dim=0 to visualize all clouds.
     """
-    pcd = o3d.geometry.PointCloud()
-    print(xyz.shape)
-    pcd.points = o3d.utility.Vector3dVector(xyz)
-    o3d.visualization.draw_geometries([pcd])
-
+    xyz = xyzr[:,:,:3] 
+    signal = xyzr[:,:,3:] # 3: for broadcasting
+    # print("Shape of xyz: {}".format(xyz.shape))
+    # print("Shape of signal: {}".format(signal.shape))
+    vis = o3d.visualization.Visualizer()
+    vis.create_window()
+    geo = o3d.geometry.PointCloud()
+    geo.points = o3d.utility.Vector3dVector(xyz[0]) # Initialize with first cloud
+    
+    vis.add_geometry(geo)
+    for i,cloud in enumerate(xyz[1:],1):
+        geo.points = o3d.utility.Vector3dVector(cloud)
+        geo.colors = o3d.utility.Vector3dVector(np.zeros((xyzr.shape[1],3))+signal[i,:,:]) # Not finished
+        vis.update_geometry(geo)
+        vis.poll_events()
+        vis.update_renderer()
+        time.sleep(0.5) # Time between clouds
 
 if __name__ == "__main__":
     scan,source = get_single_example()
     xyz = get_xyz(source)
     signal = get_signal_reflection(scan,source)
     xyzr = convert_to_xyzr(xyz,signal)
-    plot_open3d_pc(compress_mid_dim_xyz(np.expand_dims(xyz,axis=0)))
+    plot_open3d_pc(np.repeat(compress_mid_dim(xyzr),repeats=5,axis=0))
