@@ -6,8 +6,11 @@ from more_itertools import time_limited,nth
 import numpy as np
 from timeit import default_timer as timer
 from datetime import datetime
+import open3d as o3d
 
-from torch import ge
+
+
+
 def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503): 
     """
     Set sensor configuration.
@@ -113,6 +116,15 @@ def convert_to_xyzr(xyz,signal):
         print("Different shapes for xyz and signal. xyz: {}, signal: {}".format(xyz.shape,signal.shape))
         return None
     return xyzr
+def compress_mid_dim_xyz(xyz):
+    """
+    Compress mid dim of xyz to create (bs,n_points,3 or 4).
+    @param xyz: numpy array of xyz data (bs, channels, beams, 3 or 4)
+    """
+    if len(xyz.shape) < 4:
+        raise ValueError(f"xyz should be: (bs, channels, beams, 3 or 4). got {xyz.shape}.")
+    return xyz.reshape(xyz.shape[0],-1,xyz.shape[-1])
+
 def get_signal_reflection(scan,source):
     """
     Get signal reflection from scan.
@@ -141,7 +153,7 @@ def get_xyz(source):
     if source is None:
         raise ValueError("source is None")
     xyzlut = client.XYZLut(source.metadata)
-    return xyzlut(scan)
+    return np.expand_dims(xyzlut(scan),axis=0)
 
 def plot_lidar_example(xyz):
     """
@@ -163,8 +175,8 @@ def get_single_example():
     Get a single example from the lidar data.
 
     """
-    metadata_path = "/Users/theodorjonsson/GithubProjects/ExampleData/OS-0-64-U02_122107000535_1024x10_20220608_163248.json"
-    pcap_path = "/Users/theodorjonsson/GithubProjects/ExampleData/OS-0-64-U02_122107000535_1024x10_20220608_163248.pcap"
+    metadata_path = "C:/Users/Theodor Jonsson/Visual_studio_code/Machine_learning/LidarData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.json"
+    pcap_path = "C:/Users/Theodor Jonsson/Visual_studio_code/Machine_learning/LidarData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.pcap"
     #pcap_path = '/Users/theodorjonsson/GithubProjects/ExampleData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.pcap'
     #metadata_path = '/Users/theodorjonsson/GithubProjects/ExampleData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.json'
     with open(metadata_path,'r') as file:
@@ -175,10 +187,20 @@ def get_single_example():
         scan = nth(scans, 50) # Five second scan (50Rot/10Hz)
     print(scan)
     return scan,source
+def plot_open3d_pc(xyz):
+    """
+    Plot lidar example from xyz data.
+    @param xyz: numpy array of xyz data
+    """
+    pcd = o3d.geometry.PointCloud()
+    print(xyz.shape)
+    pcd.points = o3d.utility.Vector3dVector(xyz)
+    o3d.visualization.draw_geometries([pcd])
+
 
 if __name__ == "__main__":
     scan,source = get_single_example()
     xyz = get_xyz(source)
     signal = get_signal_reflection(scan,source)
     xyzr = convert_to_xyzr(xyz,signal)
-    plot_lidar_example(xyz)
+    plot_open3d_pc(compress_mid_dim_xyz(np.expand_dims(xyz,axis=0)))
