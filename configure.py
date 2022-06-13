@@ -1,4 +1,3 @@
-from antigravity import geohash
 from ouster import client, pcap
 from contextlib import closing
 import cv2
@@ -22,6 +21,7 @@ def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port
 
     @return: Sensor Config Object.
     """
+    print("Configuring sensor.")
     # establish sensor connection
     config = client.SensorConfig()
     # set the values that you need: see sensor documentation for param meanings
@@ -62,7 +62,8 @@ def record_lidar(config,n_seconds = 2,hostname = 'os-122107000535.local',lidar_p
         source_it = time_limited(n_seconds, source)
         n_packets = pcap.record(source_it, f"{fname_base}.pcap")
         print(f"Captured {n_packets} packets")
-def stream_live(config,hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503):
+    
+def stream_live(config=None,hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503):
     """
     Stream Live from sensor belonging to hostname, given a specified config.
     @param config: SensorConfig object
@@ -76,19 +77,24 @@ def stream_live(config,hostname = 'os-122107000535.local',lidar_port = 7502, imu
     print("Start Lidar Stream:")
     with closing(client.Scans.stream(hostname, lidar_port,
                                     complete=False)) as stream:
+        # First frame to initialize visualizer
+        first_scan = next(iter(stream))
+        xyz = get_xyz(stream,first_scan)
+        signal = get_signal_reflection(first_scan,stream)
+        xyzr = convert_to_xyzr(xyz,signal)
+        comp_xyzr = compress_mid_dim(xyzr)
+        vis, geo = initialize_o3d_plot(comp_xyzr)
+        # start the stream
         for i,scan in enumerate(stream):
             # uncomment if you'd like to see frame id printed
             # print("frame id: {} ".format(scan.frame_id))
-            start = timer()
-            xyzlut = client.XYZLut(stream.metadata)
             signal = get_signal_reflection(scan,stream)
-            xyz = get_xyz(stream)
+            xyz = get_xyz(stream,scan)
             xyzr = convert_to_xyzr(xyz,signal)
-            end = timer()
+            comp_xyzr = compress_mid_dim(xyzr)
+            update_open3d_live(geo,comp_xyzr,vis)
             # print(f"T: {end-start} s")
-            if i>10:
-                print(signal)
-                print(xyz)
+            if i>1000:
                 break
 def convert_to_xyzr(xyz,signal):
     """
@@ -110,14 +116,15 @@ def convert_to_xyzr(xyz,signal):
     if len(signal.shape) < 4:
         #"Signals should same as xyz except final dim: (bs, n_scans, n_points, 1)")
         signal = np.expand_dims(signal,axis=-1)
-    print("xyz.shape: {}".format(xyz.shape))
-    print("signal.shape: {}".format(signal.shape))
+    #print("xyz.shape: {}".format(xyz.shape))
+    #print("signal.shape: {}".format(signal.shape))
     try:
         xyzr = np.concatenate((xyz,signal),axis=-1)
     except:
         print("Different shapes for xyz and signal. xyz: {}, signal: {}".format(xyz.shape,signal.shape))
         return None
     return xyzr
+
 def compress_mid_dim(data):
     """
     Compress mid dim of xyz,xyzr or signal to create (bs,n_points, 1 3 or 4).
@@ -142,13 +149,13 @@ def get_signal_reflection(scan,source):
         return np.expand_dims(client.destagger(source.metadata,
                             scan.field(client.ChanField.REFLECTIVITY)),0)
     except:
-        print("Error getting signal reflection")
+        print("Error getting signal reflection.")
         return None
-def get_xyz(source):
+def get_xyz(source,scan):
     """
     Get xyz data from scan.
     @param source: Source of data
-
+    @param scan: Scan object
     @return: numpy array of xyz data
     """
     if source is None:
@@ -171,6 +178,7 @@ def plot_lidar_example(xyz):
     z_col = np.minimum(np.absolute(z), 5)
     ax.scatter(x, y, z, c=z_col, s=0.2)
     plt.show()
+
 def get_single_example():
     """
     Get a single example from the lidar data.
@@ -186,9 +194,39 @@ def get_single_example():
     with closing(client.Scans(source)) as scans:
         scan = nth(scans, 50) # Five second scan (50Rot/10Hz)
     return scan,source
+def initialize_o3d_plot(xyzr):
+    """
+    Initialize o3d plot.
+    @param xyzr: numpy array of xyzr data to initailize plot with.
+
+    @return: o3d.visualization.Visualizer object
+    """
+    xyz = xyzr[:,:,:3]
+    signal = xyzr[:,:,3:]
+    vis = o3d.visualization.Visualizer()
+    vis.create_window()
+    geo = o3d.geometry.PointCloud()
+    #print("xyz.shape: {}".format(xyz.shape))
+    geo.points = o3d.utility.Vector3dVector(xyz[0])
+    vis.add_geometry(geo)
+    return vis,geo
+
+def update_open3d_live(geo,xyzr,vis):
+    """
+    Plot lidar data live using open3d.
+    @param xyzr: numpy array of xyzr data
+    """
+    xyz = xyzr[:,:,:3]
+    signal = xyzr[:,:,3:]
+    geo.points = o3d.utility.Vector3dVector(xyz[0])
+    vis.update_geometry(geo)
+    vis.poll_events()
+    vis.update_renderer()
+    
+    
 def plot_open3d_pc(xyzr):
     """
-    Plot lidar example from xyz data.
+    Plot lidar example from xyzr data.
     @param xyzr: numpy array of xyzr data. Each cloud is stacked in dim=0. Iterate over dim=0 to visualize all clouds.
     """
     xyz = xyzr[:,:,:3] 
@@ -207,11 +245,11 @@ def plot_open3d_pc(xyzr):
         vis.update_geometry(geo)
         vis.poll_events()
         vis.update_renderer()
-        time.sleep(0.5) # Time between clouds
+        time.sleep(0.2) # Time between clouds
 
 if __name__ == "__main__":
-    scan,source = get_single_example()
-    xyz = get_xyz(source)
-    signal = get_signal_reflection(scan,source)
-    xyzr = convert_to_xyzr(xyz,signal)
-    plot_open3d_pc(np.repeat(compress_mid_dim(xyzr),repeats=5,axis=0))
+    stream_live()
+    #scan,source = get_single_example()
+    #xyz = get_xyz(source)
+    #signal = get_signal_reflection(scan,source)
+    #xyzr = convert_to_xyzr(xyz,signal)
