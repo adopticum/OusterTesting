@@ -1,3 +1,4 @@
+from mimetypes import init
 from ouster import client, pcap
 from contextlib import closing
 import cv2
@@ -8,8 +9,6 @@ from timeit import default_timer as timer
 import time
 from datetime import datetime
 import open3d as o3d
-
-
 
 
 def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503): 
@@ -184,8 +183,8 @@ def get_single_example():
     Get a single example from the lidar data.
 
     """
-    metadata_path = "C:/Users/Theodor Jonsson/Visual_studio_code/Machine_learning/LidarData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.json"
-    pcap_path = "C:/Users/Theodor Jonsson/Visual_studio_code/Machine_learning/LidarData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.pcap"
+    metadata_path = "/Users/theodorjonsson/GithubProjects/LidarStuff/RecordedData/OS0/json/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.json"
+    pcap_path = "/Users/theodorjonsson/GithubProjects/LidarStuff/RecordedData/OS0/pcap/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.pcap"
     #pcap_path = '/Users/theodorjonsson/GithubProjects/ExampleData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.pcap'
     #metadata_path = '/Users/theodorjonsson/GithubProjects/ExampleData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.json'
     with open(metadata_path,'r') as file:
@@ -201,14 +200,15 @@ def initialize_o3d_plot(xyzr):
 
     @return: o3d.visualization.Visualizer object
     """
-    xyz = xyzr[:,:,:3]
-    signal = xyzr[:,:,3:]
+    xyz = xyzr[:,:3]
+    signal = xyzr[:,3:]
     vis = o3d.visualization.Visualizer()
     vis.create_window()
     geo = o3d.geometry.PointCloud()
     #print("xyz.shape: {}".format(xyz.shape))
-    geo.points = o3d.utility.Vector3dVector(xyz[0])
+    geo.points = o3d.utility.Vector3dVector(xyz)
     vis.add_geometry(geo)
+    vis.run()
     return vis,geo
 
 def update_open3d_live(geo,xyzr,vis):
@@ -231,14 +231,10 @@ def plot_open3d_pc(xyzr):
     """
     xyz = xyzr[:,:,:3] 
     signal = xyzr[:,:,3:] # 3: for broadcasting
-    # print("Shape of xyz: {}".format(xyz.shape))
-    # print("Shape of signal: {}".format(signal.shape))
-    vis = o3d.visualization.Visualizer()
-    vis.create_window()
-    geo = o3d.geometry.PointCloud()
-    geo.points = o3d.utility.Vector3dVector(xyz[0]) # Initialize with first cloud
-    
-    vis.add_geometry(geo)
+    print("Shape of xyz: {}".format(xyz.shape))
+    print("Shape of signal: {}".format(signal.shape))
+   
+    vis,geo = initialize_o3d_plot(xyz[0])
     for i,cloud in enumerate(xyz[1:],1):
         geo.points = o3d.utility.Vector3dVector(cloud)
         geo.colors = o3d.utility.Vector3dVector(np.zeros((xyzr.shape[1],3))+signal[i,:,:]) # Not finished
@@ -248,8 +244,9 @@ def plot_open3d_pc(xyzr):
         time.sleep(0.2) # Time between clouds
 
 if __name__ == "__main__":
-    stream_live()
-    #scan,source = get_single_example()
-    #xyz = get_xyz(source)
-    #signal = get_signal_reflection(scan,source)
-    #xyzr = convert_to_xyzr(xyz,signal)
+    #stream_live()
+    scan,source = get_single_example()
+    xyz = get_xyz(source,scan)
+    signal = get_signal_reflection(scan,source)
+    xyzr = convert_to_xyzr(xyz,signal)
+    plot_open3d_pc(compress_mid_dim(xyzr))
