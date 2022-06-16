@@ -2,14 +2,14 @@ from mimetypes import init
 from ouster import client, pcap
 from contextlib import closing
 import cv2
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 from more_itertools import time_limited,nth
 import numpy as np
 from timeit import default_timer as timer
 import time
 from datetime import datetime
 import open3d as o3d
-
+import os
 
 def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503): 
     """
@@ -33,7 +33,17 @@ def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port
     client.set_config(hostname, config, persist=True, udp_dest_auto=True)
     return [config, hostname]
 
-def record_lidar(config,n_seconds = 2,hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503):
+def record_lidar_seq(
+                    config=None,
+                    fileformat="nly",
+                    lidar_folder_path="lidar_scans",
+                    scan_name = str(f"Ouster_{datetime.now().strftime("%Y%m%d_%H%M%S%f")}"),
+                    seq_length = 1,
+                    n_seconds = 1,
+                    hostname = 'os-122107000535.local',
+                    lidar_port = 7502,
+                    imu_port = 7503
+                    ):
     """
     Record lidar data for n_seconds and save to local generated path..
     @param config: SensorConfig object
@@ -43,25 +53,48 @@ def record_lidar(config,n_seconds = 2,hostname = 'os-122107000535.local',lidar_p
     @param imu_port: int (default 7503)
 
     """
+    os.mkdir(f"{lidar_scans}/{scan_name}")
+    scan_path = f"{lidar_scans}/{scan_name}/"
     if config is None:
         [config,_] = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
     # connect to sensor and record lidar/imu packets
-    with closing(client.Sensor(hostname, lidar_port, imu_port,
-                               buf_size=640)) as source:
-    
-        # make a descriptive filename for metadata/pcap files
-        time_part = datetime.now().strftime("%Y%m%d_%H%M%S")
-        meta = source.metadata
-        fname_base = f"{meta.prod_line}_{meta.sn}_{meta.mode}_{time_part}"
-    
-        print(f"Saving sensor metadata to: {fname_base}.json")
-        source.write_metadata(f"{fname_base}.json")
-    
-        print(f"Writing to: {fname_base}.pcap (Ctrl-C to stop early)")
-        source_it = time_limited(n_seconds, source)
-        n_packets = pcap.record(source_it, f"{fname_base}.pcap")
-        print(f"Captured {n_packets} packets")
-    
+    if fileformat == "nly":
+        with closing(client.Scans.stream(hostname, lidar_port,
+                                    complete=False)) as stream:
+            print(f"Record lidar sequence with {seq_length} frames:")
+            for seq in range(seq_length):
+                xyz = get_xyz(stream,first_scan)
+                signal = get_signal_reflection(first_scan,stream)
+                xyzr = convert_to_xyzr(xyz,signal)
+                comp_xyzr = compress_mid_dim(xyzr)
+                save_to_nly(comp_xyzr,scan_path,seq)
+    elif False:
+        with closing(client.Sensor(hostname, lidar_port, imu_port,
+                                   buf_size=640)) as source:
+
+            # make a descriptive filename for metadata/pcap files
+
+            time_part = datetime.now().strftime("%Y%m%d_%H%M%S")
+            meta = source.metadata
+            fname_base = f"{meta.prod_line}_{meta.sn}_{meta.mode}_{time_part}"
+
+            print(f"Saving sensor metadata to: {fname_base}.json")
+            source.write_metadata(f"{fname_base}.json")
+
+            print(f"Writing to: {fname_base}.pcap (Ctrl-C to stop early)")
+            source_it = time_limited(n_seconds, source)
+            n_packets = pcap.record(source_it, f"{fname_base}.pcap")
+            print(f"Captured {n_packets} packets")
+def save_to_nly(xyzr,seq_path,seq):
+    """
+    Save lidar data to nly file.
+    @param xyzr: numpy array
+    @param scan_folder: string (name of scan folder)
+    @param seq: int (sequence number)
+    """
+    filename = f"{seq_path}_{seq}.nly"
+    print(f"Saving to: {filename}")
+    np.save(filename,xyzr)
 def stream_live(config=None,hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503):
     """
     Stream Live from sensor belonging to hostname, given a specified config.
@@ -162,21 +195,21 @@ def get_xyz(source,scan):
     xyzlut = client.XYZLut(source.metadata)
     return np.expand_dims(xyzlut(scan),axis=0)
 
-def plot_lidar_example(xyz):
-    """
-    Plot lidar example from xyz data.
-    @param xyz: numpy array of xyz data
-    """
-    [x, y, z] = [c.flatten() for c in np.dsplit(xyz, 3)]
-    ax = plt.axes(projection='3d')
-    r = 5
-    ax.set_xlim3d([-r, r])
-    ax.set_ylim3d([-r, r])
-    ax.set_zlim3d([-r/2, r/2])
-    plt.axis('off')
-    z_col = np.minimum(np.absolute(z), 5)
-    ax.scatter(x, y, z, c=z_col, s=0.2)
-    plt.show()
+#def plot_lidar_example(xyz):
+#    """
+#    Plot lidar example from xyz data.
+#    @param xyz: numpy array of xyz data
+#    """
+#    [x, y, z] = [c.flatten() for c in np.dsplit(xyz, 3)]
+#    ax = plt.axes(projection='3d')
+#    r = 5
+#    ax.set_xlim3d([-r, r])
+#    ax.set_ylim3d([-r, r])
+#    ax.set_zlim3d([-r/2, r/2])
+#    plt.axis('off')
+#    z_col = np.minimum(np.absolute(z), 5)
+#    ax.scatter(x, y, z, c=z_col, s=0.2)
+#    plt.show()
 
 def get_single_example():
     """
@@ -244,9 +277,9 @@ def plot_open3d_pc(xyzr):
         time.sleep(0.2) # Time between clouds
 
 if __name__ == "__main__":
-    #stream_live()
-    scan,source = get_single_example()
-    xyz = get_xyz(source,scan)
-    signal = get_signal_reflection(scan,source)
-    xyzr = convert_to_xyzr(xyz,signal)
-    plot_open3d_pc(compress_mid_dim(xyzr))
+    record_lidar_seq()
+    #scan,source = get_single_example()
+    #xyz = get_xyz(source,scan)
+    #signal = get_signal_reflection(scan,source)
+    #xyzr = convert_to_xyzr(xyz,signal)
+    #plot_open3d_pc(compress_mid_dim(xyzr))
