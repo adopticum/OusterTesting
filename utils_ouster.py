@@ -21,6 +21,7 @@ def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port
 
     @return: Sensor Config Object.
     """
+   
     print("Configuring sensor.")
     # establish sensor connection
     config = client.SensorConfig()
@@ -37,7 +38,7 @@ def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port
 def record_lidar_seq(
                     config=None,
                     fileformat="npy",
-                    lidar_folder_path="lidar_scans",
+                    lidar_folder_path="../lidar_scans",
                     scan_name = str(f"Ouster_{dt.now().strftime('%Y%m%d_%H%M%S')}"),
                     set_frames = False,
                     seq_length = 1.0,
@@ -59,13 +60,16 @@ def record_lidar_seq(
 
 
     """
+    if config is None:
+        try:
+            [config,_] = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
+        except:
+            raise Exception("Could not connect to sensor.")
     if not os.path.exists(lidar_folder_path):
         os.makedirs(lidar_folder_path)
     scan_path = f"{lidar_folder_path}/{scan_name}/"
     if not os.path.exists(scan_path):
         os.mkdir(f"{lidar_folder_path}/{scan_name}")
-    if config is None:
-        [config,_] = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
     # connect to sensor and record lidar/imu packets
     frames = 0
     full_seq = []
@@ -91,19 +95,19 @@ def record_lidar_seq(
                     comp_xyzr = compress_mid_dim(xyzr)
                     #print(f"comp_xyzr shape: {comp_xyzr.shape}")
                     full_seq.append(comp_xyzr)
-                    #save_to_nly(comp_xyzr,scan_path,seq)
+                    save_to_nly(comp_xyzr,scan_path,seq)
                     #print(f"Time: {time.time()-start} frame {seq}")
                     if not set_frames:
-                        pbar.update(((time.time()-start)/seq_length)-pbar.n)
+                        pbar.update(((time.time()-start)/seq_length))
                         if time.time()-start>seq_length:
                             frames = seq + 1
                             break
                     if seq>seq_length and set_frames:
                         pbar.update()
                         break
-            full_seq = np.asarray(full_seq)
+            #full_seq = np.asarray(full_seq)
             print(f"Full Seq shape: {full_seq.shape}")
-            save_to_nly(full_seq,scan_path,0)
+            #save_to_nly(full_seq,f"{scan_path+"_FS"}",0)
     
     elif fileformat == "pcap":
         with closing(client.Sensor(hostname, lidar_port, imu_port,
@@ -134,6 +138,8 @@ def save_to_nly(xyzr,seq_path,seq):
     filename = f"{seq_path}{seq}"
     #print(f"Saving to: {filename}")
     np.save(filename,xyzr)
+
+
 def play_back_recording(seq_dir_path):
     """
     Play back lidar data from nly files.
@@ -176,9 +182,21 @@ def play_back_recording_multifile(seq_dir_path):
                     vis, geo = initialize_o3d_plot(xyzr)
                 else:
                     update_open3d_live(geo, xyzr,vis)
+                    time.sleep(0.05)
             #time.sleep(0.1)
     
-
+def process_lidar_scan(scan_path=None):
+    """
+    Process lidar scan data.
+    @param scan_path: string (path to lidar scan folder) containing .npy
+    """
+    if not os.path.exists(scan_path):
+        raise FileNotFoundError(f"{scan_path} does not exist")
+    print(f"Processing lidar data from: {scan_path}")
+    for i,files in enumerate(os.listdir(scan_path)):
+        if files.endswith("FS.npy"):
+            print(f"Processing lidar data from file: {files}")
+            scn = np.load(f"{scan_path}/{files}")
 def stream_live(config=None,hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503):
     """
     Stream Live from sensor belonging to hostname, given a specified config.
@@ -361,8 +379,8 @@ def plot_open3d_pc(xyzr):
         time.sleep(0.1) # Time between clouds
 
 if __name__ == "__main__":
-    filename,_ = record_lidar_seq(seq_length=5)
-    #filename = "lidar_scans/Ouster_20220616_141337"
+    #filename,_ = record_lidar_seq(seq_length=5)
+    filename = "lidar_scans/Ouster_20220617_100040"
     print("filename: {}".format(filename))
     play_back_recording_multifile(filename)
     #scan,source = get_single_example()
