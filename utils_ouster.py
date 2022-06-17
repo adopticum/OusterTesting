@@ -42,7 +42,7 @@ def record_lidar_seq(
                     scan_name = str(f"Ouster_{dt.now().strftime('%Y%m%d_%H%M%S')}"),
                     set_frames = False,
                     seq_length = 1.0,
-                    hostname = 'os-122107000535.local',
+                    hostname = "192.168.200.78",#'os-122107000535.local',
                     lidar_port = 7502,
                     imu_port = 7503
                     ):
@@ -78,13 +78,8 @@ def record_lidar_seq(
         with closing(client.Scans.stream(hostname, lidar_port,
                                     complete=False)) as stream:
             print(f"Record lidar data to npy files {seq_length}:")
-            if not set_frames:
-                start = time.time()
-            else:
-                seq_length = int(seq_length)
-
-            start = time.time()
             with tqdm(total=seq_length) as pbar:
+                start = time.time()
                 for seq,scan in enumerate(stream,0):
                     xyz = get_xyz(stream,scan)
                     #print(f"xyz shape: {xyz.shape}")
@@ -98,12 +93,11 @@ def record_lidar_seq(
                     save_to_nly(comp_xyzr,scan_path,seq)
                     #print(f"Time: {time.time()-start} frame {seq}")
                     if not set_frames:
-                        pbar.update(((time.time()-start)/seq_length))
+                        p = min(((time.time()-start)/seq_length),1)
+                        pbar.update(p)
                         if time.time()-start>seq_length:
-                            frames = seq + 1
                             break
                     if seq>seq_length and set_frames:
-                        pbar.update()
                         break
             full_seq = np.asarray(full_seq)
             print(f"Full Seq shape: {full_seq.shape}")
@@ -139,20 +133,63 @@ def save_to_nly(xyzr,seq_path,seq):
     #print(f"Saving to: {filename}")
     np.save(filename,xyzr)
 
-
-def play_back_recording(seq_dir_path):
+def unpack_multi_dim(scan_path):
+    """ NOT WORKING YET (!!!)
+    Unpack lidar data from multi-dim array.
+    @param scan_path: string (path to lidar scans) 
+    """
+    scan_path = None
+    frame_id = 0
+    lst = os.listdir(scan_path)
+    print(lst)
+    lst.sort()
+    print(lst)
+    for i,dirs in enumerate(lst):
+        if dirs.endswith(".npy"):
+            N_xyzr = np.load(f"{scan_path}/{dirs}")
+            load_path = f"{scan_path}/{dirs}"
+            if len(N_xyzr.shape) == 2:
+                save_to_nly(N_xyzr,scan_path,frame_id)
+                frame_id += 1
+            elif len(N_xyzr.shape) == 3:
+                for xyzr in N_xyzr:
+                    save_to_nly(xyzr,load_path,frame_id)
+                    frame_id += 1
+            else:
+                print(f"Ignoring file: {dirs}. Wrong dimensions.")
+        elif os.path.isdir(dirs):
+            unpack_multi_dim(f"{scan_path}/{dirs}")
+import re
+def sorted_alphanumeric(data):
+    convert = lambda text: int(text) if text.isdigit() else text.lower()
+    alphanum_key = lambda key: [ convert(c) for c in re.split('([0-9]+)', key) ] 
+    return sorted(data, key=alphanum_key)
+def trim_xyzr(xyzr,trim_thresh):
+    """
+    Trim lidar data to remove points that are too close to the sensor.
+    @param xyzr: numpy array
+    @param trim_thresh: float (threshold distance in meters)
+    """
+    #indices = np.where(xyzr[:,0]>trim_thresh[0] and xyzr[:,1]>trim_thresh[1] and xyzr[:,2]>trim_thresh[2])
+    return xyzr[(xyzr[:,0]<trim_thresh[0]) * (xyzr[:,1]<trim_thresh[1]) * (xyzr[:,2]<trim_thresh[2]),:]
+def play_back_recording(seq_dir_path,trim=None):
     """
     Play back lidar data from nly files.
     @param seq_dir_path: string (path to lidar scan folder) containing .npy
+    @param trim: [x,y,z] max
     """
     if not os.path.exists(seq_dir_path):
         raise FileNotFoundError(f"{seq_dir_path} does not exist")
     print(f"Playing back lidar data from: {seq_dir_path}")
-    for i,files in enumerate(os.listdir(seq_dir_path)):
-        if files.endswith(".npy"):
+    dirlist = sorted_alphanumeric(os.listdir(seq_dir_path))
+    for i,files in enumerate(dirlist):
+        if files.endswith(".npy") and not files.startswith("FS"):
             xyzr = np.load(f"{seq_dir_path}/{files}")
+            print(f"Frame: {files[:-4]}")
             if len(xyzr.shape)==3:
                 xyzr = compress_mid_dim(xyzr)
+            if trim is not None:
+                xyzr = trim_xyzr(xyzr,trim)
             xyz = xyzr[:,:3]
             signal = xyzr[:,3]
             #print(f"xyzr shape: {xyzr.shape}")
@@ -160,6 +197,7 @@ def play_back_recording(seq_dir_path):
                 vis, geo = initialize_o3d_plot(xyzr)
             else:
                 update_open3d_live(geo, xyzr,vis)
+                time.sleep(0.15)
             #time.sleep(0.1)
     
 def play_back_recording_multifile(seq_dir_path):
@@ -171,7 +209,7 @@ def play_back_recording_multifile(seq_dir_path):
         raise FileNotFoundError(f"{seq_dir_path} does not exist")
     print(f"Playing back lidar data from: {seq_dir_path}")
     for i,files in enumerate(os.listdir(seq_dir_path)):
-        if files.endswith(".npy"):
+        if files.endswith(".npy") and not files.startswith("FS"):
             print(f"Plotting lidar data from file: {files}")
             full_seq = np.load(f"{seq_dir_path}/{files}")
             for j,xyzr in enumerate(full_seq):
@@ -182,7 +220,7 @@ def play_back_recording_multifile(seq_dir_path):
                     vis, geo = initialize_o3d_plot(xyzr)
                 else:
                     update_open3d_live(geo, xyzr,vis)
-                    time.sleep(0.05)
+                    time.sleep(1)
             #time.sleep(0.1)
     
 def process_lidar_scan(scan_path=None):
@@ -211,7 +249,6 @@ def stream_live(config=None,hostname = 'os-122107000535.local',lidar_port = 7502
     print("Start Lidar Stream:")
     with closing(client.Scans.stream(hostname, lidar_port,
                                     complete=False)) as stream:
-        # First frame to initialize visualizer
         first_scan = next(iter(stream))
         xyz = get_xyz(stream,first_scan)
         signal = get_signal_reflection(stream,first_scan)
@@ -282,7 +319,7 @@ def get_signal_reflection(source,scan):
     except:
         print("Error getting signal reflection.")
         return None
-def get_xyz(source,scan):
+def get_xyz(source,scan,trim=None):
     """
     Get xyz data from scan.
     @param source: Source of data
@@ -292,7 +329,11 @@ def get_xyz(source,scan):
     if source is None:
         raise ValueError("source is None")
     xyzlut = client.XYZLut(source.metadata)
-    return xyzlut(scan)
+    xyz = xyzlut(scan)
+    if trim is not None:
+        indices = xyz[:,0] < trim[0] and xyz[:,1] < trim[1] and xyz[:,2] < trim[2]
+        xyz = xyz[indices,:]
+    return xyz
 
 #def plot_lidar_example(xyz):
 #    """
@@ -309,6 +350,21 @@ def get_xyz(source,scan):
 #    z_col = np.minimum(np.absolute(z), 5)
 #    ax.scatter(x, y, z, c=z_col, s=0.2)
 #    plt.show()
+def seperate_outliers(cloud,ind):
+    """
+    Seperate outliers from cloud.
+    @param cloud: o3d cloud object
+    @param ind: numpy array of indices of outliers
+
+    @return: cloud_outliers: o3d cloud object of outliers
+    @return: cloud_inliers: o3d cloud object of inliers
+    """
+    inlier_cloud = cloud.select_by_index(ind)
+    outlier_cloud = cloud.select_by_index(ind, invert=True)
+
+    outlier_cloud.paint_uniform_color([1, 0, 0])
+    inlier_cloud.paint_uniform_color([0.8, 0.8, 0.8])
+    return inlier_cloud, outlier_cloud
 
 def get_single_example():
     """
@@ -334,6 +390,7 @@ def initialize_o3d_plot(xyzr):
     """
     xyzr = xyzr[0] if len(xyzr.shape) > 2 else xyzr
     xyz = xyzr[:,:3]
+    print(xyz)
     signal = xyzr[:,3:]
     vis = o3d.visualization.Visualizer()
     vis.create_window()
@@ -350,6 +407,7 @@ def update_open3d_live(geo,xyzr,vis):
     @param xyzr: numpy array of xyzr data
     """
     xyzr = xyzr[0] if len(xyzr.shape) > 2 else xyzr
+
     xyz = xyzr[:,:3]
     signal = xyzr[:,3:]
     #print("xyz.shape: {}".format(xyz.shape))
@@ -379,10 +437,10 @@ def plot_open3d_pc(xyzr):
         time.sleep(0.1) # Time between clouds
 
 if __name__ == "__main__":
-    #filename,_ = record_lidar_seq(seq_length=5)
-    filename = "lidar_scans/Ouster_20220617_100040"
+    filename,_ = record_lidar_seq(seq_length=5)
+    #filename = "../lidar_scans/Huuuman"
     print("filename: {}".format(filename))
-    play_back_recording_multifile(filename)
+    play_back_recording(filename,trim=[10,10,10])
     #scan,source = get_single_example()
     #xyz = get_xyz(source,scan)
     #signal = get_signal_reflection(scan,source)
