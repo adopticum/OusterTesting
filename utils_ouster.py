@@ -105,9 +105,9 @@ def record_lidar_seq(
                     if seq>seq_length and set_frames:
                         pbar.update()
                         break
-            #full_seq = np.asarray(full_seq)
+            full_seq = np.asarray(full_seq)
             print(f"Full Seq shape: {full_seq.shape}")
-            #save_to_nly(full_seq,f"{scan_path+"_FS"}",0)
+            save_to_nly(full_seq,f"{scan_path}/FS",0)
     
     elif fileformat == "pcap":
         with closing(client.Sensor(hostname, lidar_port, imu_port,
