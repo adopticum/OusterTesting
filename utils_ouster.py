@@ -1,6 +1,7 @@
 from mimetypes import init
 from ouster import client, pcap
 from contextlib import closing
+from datetime import datetime as dt
 import cv2
 import matplotlib.pyplot as plt
 from more_itertools import time_limited,nth
@@ -10,6 +11,7 @@ from torch import dtype
 from tqdm import tqdm
 import time
 from datetime import datetime as dt
+from copy import copy
 import open3d as o3d
 import math
 import os
@@ -539,7 +541,7 @@ def signal_ref_range(source,scan,limits:dict):
     # print(f"min range: {range_ous.min()} at: {np.unravel_index(range_ous.argmin(),range_ous.shape)}")
     stack = np.stack([signal,ref,range_ous],axis=2).astype(np.float32)
     return stack
-def record_cv2_images(config=None,hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503):
+def record_cv2_images(args):
     """
     Stream Live from sensor belonging to hostname, given a specified config.
     @param config: SensorConfig object
@@ -547,21 +549,37 @@ def record_cv2_images(config=None,hostname = 'os-122107000535.local',lidar_port 
     @param lidar_port: int (default 7502)
     @param imu_port: int (default 7503)
     """
-    plt.ion()
-    if config is None:
+    lidar_port = args.lidar_port
+    imu_port = args.imu_port
+    hostname = args.hostname
+    host_ip = args.host_ip
+    frames_to_record = args.frames_to_record
+    #plt.ion()
+    if host_ip is not None:
+        config = sensor_config(hostname=host_ip,lidar_port=lidar_port,imu_port=imu_port)
+        hostname = host_ip
+    elif hostname is not None:
         config = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
-    frames_to_record = 25
     # create a stream object
+    print(lidar_port,imu_port,hostname)
+    save_path = f"../lidarImages/{args.scene_name}"
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    else:
+        print(f"{save_path} already exists")
+        save_path = f"{save_path}{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        print(f"Saving to {save_path}")
+        os.mkdir(save_path)
     print("Start Lidar Stream:")
     with closing(client.Scans.stream(hostname, lidar_port,
-                                    complete=False)) as stream:
+                                    complete=True)) as stream:
         first_scan = next(iter(stream))
         xyz = get_xyz(stream,first_scan)
         signal = get_signal_reflection(stream,first_scan)
         xyzr = convert_to_xyzr(xyz,signal)
         comp_xyzr = compress_mid_dim(xyzr)
         comp_xyzr = trim_xyzr(comp_xyzr,[25,25,25])
-        wait_for_input = True
+        wait_for_input = args.wait_for_input
         #vis, geo = initialize_o3d_plot(comp_xyzr)
         limits = {"ir":6000,"reflectivity": 255, "range":25000}
         # start the stream
@@ -578,16 +596,35 @@ def record_cv2_images(config=None,hostname = 'os-122107000535.local',lidar_port 
             #update_open3d_live(geo,comp_xyzr,vis)
             img = ir_ref_range(stream,scan,limits)
             #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
-            filename = f"../lidarImages/image_{i}.jpg"
+            filename = f"{save_path}/image_{i}.jpg"
+            cv2.imshow("Recording", cv2.cvtColor(copy(img),cv2.COLOR_RGB2BGR))
+            cv2.waitKey(1)
             cv2.imwrite(filename,cv2.cvtColor(img*255,cv2.COLOR_RGB2BGR))
-            cv2.imshow("Recording",img*255)
-            time.sleep(3)
             if i>=frames_to_record:
                 break
-           
+            if not wait_for_input:
+                time.sleep(args.time_to_wait)
+import argparse  
+import sys         
+def parse_config():
+    parser = argparse.ArgumentParser(description='arg parser') 
+    parser.add_argument('--hostname', type=str, default=None, help='hostname')
+    parser.add_argument('--lidar_port', type=int, default=7502, help='lidar port')
+    parser.add_argument('--imu_port', type=int, default=7503, help='imu port')
+    parser.add_argument('--host_ip', type=str, default="192.168.200.78", help='ip address of host')
+    parser.add_argument('--scene_name', type=str, default='scene_1', help='scene name')
+    parser.add_argument('--frames_to_record', type=int, default=25, help='frames to record')
+    parser.add_argument('--time_to_wait', type=float, default=3, help='time to wait between images')
+    if sys.version_info >= (3,9):
+        parser.add_argument('--wait_for_input', action=argparse.BooleanOptionalAction)
+    else:
+        parser.add_argument('--wait_for_input', action='store_true')
+        parser.add_argument('--no-wait_for_input', action='store_false')
+    return parser.parse_args()
+
 
 if __name__ == "__main__":
-    stream_live(hostname="192.168.200.78")
+    record_cv2_images(parse_config())
     #filename,_ = record_lidar_seq(seq_length=5)
     #filename = "../lidar_scans/Huuuman"
     #print("filename: {}".format(filename))
