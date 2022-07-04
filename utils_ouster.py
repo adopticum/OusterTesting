@@ -580,7 +580,7 @@ def record_cv2_images(config=None,hostname = 'os-122107000535.local',lidar_port 
             #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
             filename = f"../lidarImages/image_{i}.jpg"
             cv2.imwrite(filename,cv2.cvtColor(img*255,cv2.COLOR_RGB2BGR))
-            cv2.imshow("Recording",img*255")
+            cv2.imshow("Recording",img*255)
             time.sleep(3)
             if i>=frames_to_record:
                 break
