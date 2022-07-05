@@ -625,6 +625,7 @@ def parse_config():
 
 if __name__ == "__main__":
     record_cv2_images(parse_config())
+    #python3 utils_ouster.py --scene_name "Testing" --no-wait_for_input --time_to_wait 4 --frames_to_record 10
     #filename,_ = record_lidar_seq(seq_length=5)
     #filename = "../lidar_scans/Huuuman"
     #print("filename: {}".format(filename))
