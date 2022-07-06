@@ -239,7 +239,7 @@ def process_lidar_scan(scan_path=None):
         if files.endswith("FS.npy"):
             print(f"Processing lidar data from file: {files}")
             scn = np.load(f"{scan_path}/{files}")
-def stream_live(config=None,hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503):
+def stream_live(args):
     """
     Stream Live from sensor belonging to hostname, given a specified config.
     @param config: SensorConfig object
@@ -247,8 +247,16 @@ def stream_live(config=None,hostname = 'os-122107000535.local',lidar_port = 7502
     @param lidar_port: int (default 7502)
     @param imu_port: int (default 7503)
     """
-    plt.ion()
-    if config is None:
+    lidar_port = args.lidar_port
+    imu_port = args.imu_port
+    hostname = args.hostname
+    host_ip = args.host_ip
+    frames_to_record = args.frames_to_record
+    #plt.ion()
+    if host_ip is not None:
+        config = sensor_config(hostname=host_ip,lidar_port=lidar_port,imu_port=imu_port)
+        hostname = host_ip
+    elif hostname is not None:
         config = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
     # create a stream object
     print("Start Lidar Stream:")
@@ -274,13 +282,13 @@ def stream_live(config=None,hostname = 'os-122107000535.local',lidar_port = 7502
             comp_xyzr = trim_xyzr(comp_xyzr,[limits["range"]/1000,limits["range"]/1000,limits["range"]/1000])
             update_open3d_live(geo,comp_xyzr,vis)
             img = signal_ref_range(stream,scan,limits)
-            print(f"Average: \nSignal {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
+            print(f"Average: \signal {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
             # if i == 0:
             #     #fig = plt.figure(figsize=(10,10))
             #     cv2.imshow("Lidar",img)
-            print(img.shape)
+            print(scan.h)
             cv2.imshow("Lidar",cv2.cvtColor(img,cv2.COLOR_BGR2RGB))
-            cv2.imshow("Signal",cv2.cvtColor(img[:,:,0],cv2.COLOR_GRAY2RGB))
+            cv2.imshow("signal",cv2.cvtColor(img[:,:,0],cv2.COLOR_GRAY2RGB))
             cv2.imshow("Range",cv2.cvtColor(img[:,:,1],cv2.COLOR_GRAY2RGB))
             cv2.imshow("Reflectivity",cv2.cvtColor(img[:,:,2],cv2.COLOR_GRAY2RGB))
             cv2.waitKey(1)
@@ -624,7 +632,7 @@ def parse_config():
 
 
 if __name__ == "__main__":
-    record_cv2_images(parse_config())
+    stream_live(parse_config())
     #python3 utils_ouster.py --scene_name "Testing" --no-wait_for_input --time_to_wait 4 --frames_to_record 10
     #filename,_ = record_lidar_seq(seq_length=5)
     #filename = "../lidar_scans/Huuuman"
