@@ -398,8 +398,8 @@ def get_xyz(source,scan,trim=None):
 
     #xyz  = xyzlut(scan)
     if trim is not None:
-        indices = np.nonzero((sum((abs(xyz[:,:,0])<trim[0],abs(xyz[:,:,1])<trim[1],abs(xyz[:,:,2])<trim[2]))))[0].tolist() 
-        print(indices)
+        indices = np.nonzero((sum((abs(xyz[:,:,0])<trim[0],abs(xyz[:,:,1])<trim[1],abs(xyz[:,:,2])<trim[2]))))[0].tolist()
+         
         xyz = xyz[indices,:]
     return xyz
 
