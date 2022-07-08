@@ -165,9 +165,13 @@ def unpack_multi_dim(scan_path):
             unpack_multi_dim(f"{scan_path}/{dirs}")
 import re
 def sorted_alphanumeric(data):
+    """
+    Sort alphanumeric strings.
+    """
     convert = lambda text: int(text) if text.isdigit() else text.lower()
     alphanum_key = lambda key: [ convert(c) for c in re.split('([0-9]+)', key) ] 
     return sorted(data, key=alphanum_key)
+    
 def trim_xyzr(xyzr,trim_thresh):
     """
     Trim lidar data to remove points that are too close to the sensor.
@@ -360,10 +364,10 @@ def trim_data(data,range_limit,source,scan):
     range_data = compress_mid_dim(np.expand_dims(range_data,axis=-1))
     #print(range_data.shape)
     indices = np.where(range_data < range_limit)[0].tolist()
-    print(len(indices))
-    print(data.shape)
+    #print(len(indices))
+    #print(data.shape)
     data = data[indices,:]
-    print(data.shape)
+    #print(data.shape)
     return data
 def get_signal_reflection(source,scan):
     """
