@@ -1,4 +1,5 @@
 from mimetypes import init
+from anyio import current_time
 from ouster import client, pcap
 from contextlib import closing
 from datetime import datetime as dt
@@ -574,15 +575,23 @@ def record_cv2_images(args):
         config = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
     # create a stream object
     print(lidar_port,imu_port,hostname)
-    save_path = f"../lidarImages/Ir-Ref-Range{args.scene_name}"
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
+    save_path_IRR = f"../lidarImages/Ir-Ref-Range/{args.scene_name}"
+    save_path_SRR = f"../lidarImages/Signal-Ref-Range/{args.scene_name}"
+    if not os.path.exists(save_path_IRR):
+        os.makedirs(save_path_IRR)
     else:
-        print(f"{save_path} already exists")
-        save_path = f"{save_path}{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}"
-        print(f"Saving to {save_path}")
-        os.mkdir(save_path)
-    print("Start Lidar Stream:")
+        print(f"{save_path_IRR} already exists")
+        save_path_IRR = f"{save_path_IRR}{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        print(f"Saving to {save_path_IRR}")
+        os.mkdir(save_path_IRR)
+    if not os.path.exists(save_path_SRR):
+        os.makedirs(save_path_SRR)
+    else:
+        print(f"{save_path_SRR} already exists")
+        save_path_SRR = f"{save_path_SRR}{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        print(f"Saving to {save_path_SRR}")
+        os.mkdir(save_path_SRR)
+    print(f"Start Lidar Recording: \nInterval {args.time_to_wait} seconds,\nFrames to record {args.frames_to_record}")
     with closing(client.Scans.stream(hostname, lidar_port,
                                     complete=True)) as stream:
         first_scan = next(iter(stream))
@@ -684,27 +693,46 @@ def record_cv2_images_dual(args):
         #vis, geo = initialize_o3d_plot(comp_xyzr)
         limits = {"ir":6000,"reflectivity": 255, "range":25000}
         # start the stream
-        for i,scan in enumerate(stream):
+        i = 0
+        prev_time = 0
+        ttw = args.time_to_wait if args.time_to_wait is not None else 0
+        imgsz = [1280,640]
+        for scan in stream:
             if wait_for_input:
                 input("Press Enter to Record...")
             # uncomment if you'd like to see frame id printed
             # print("frame id: {} ".format(scan.frame_id))
-            signal = get_signal_reflection(stream,scan)
-            xyz = get_xyz(stream,scan)
-            xyzr = convert_to_xyzr(xyz,signal)
-            comp_xyzr = compress_mid_dim(xyzr)
-            comp_xyzr = trim_xyzr(comp_xyzr,[limits["range"]/1000,limits["range"]/1000,limits["range"]/1000]) # Convert to meters
-            #update_open3d_live(geo,comp_xyzr,vis)
-            img = ir_ref_range(stream,scan,limits)
-            #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
-            filename = f"{save_path_IRR}/image_{i}.jpg"
-            cv2.imshow("Recording", cv2.cvtColor(copy(img),cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
-            cv2.imwrite(filename,cv2.cvtColor(img*255,cv2.COLOR_RGB2BGR))
+            current_time = time.monotonic()
+            if current_time - prev_time > ttw or wait_for_input:
+                prev_time = time.monotonic()
+                signal = get_signal_reflection(stream,scan)
+                xyz = get_xyz(stream,scan)
+                xyzr = convert_to_xyzr(xyz,signal)
+                comp_xyzr = compress_mid_dim(xyzr)
+                comp_xyzr = trim_xyzr(comp_xyzr,[limits["range"]/1000,limits["range"]/1000,limits["range"]/1000]) # Convert to meters
+                #update_open3d_live(geo,comp_xyzr,vis)
+                img_IRR = ir_ref_range(stream,scan)
+                img_SRR = signal_ref_range(stream,scan)
+                #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
+                filename_IRR = f"{save_path_IRR}/image_{i}.jpg"
+                filename_SRR = f"{save_path_SRR}/image_{i}.jpg"
+                cv2.imwrite(filename_SRR,cv2.cvtColor(img_SRR*255,cv2.COLOR_RGB2BGR))
+                cv2.imwrite(filename_IRR,cv2.cvtColor(img_IRR*255,cv2.COLOR_RGB2BGR))
+
+                cv2.imshow("IRR", cv2.resize(cv2.cvtColor(copy(img_IRR),cv2.COLOR_RGB2BGR),imgsz))
+                cv2.imshow("SRR", cv2.resize(cv2.cvtColor(copy(img_SRR),cv2.COLOR_RGB2BGR),imgsz))
+                cv2.waitKey(1)
+                i += 1
+            else:
+                img_IRR = ir_ref_range(stream,scan)
+                img_SRR = signal_ref_range(stream,scan)
+                #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
+                cv2.imshow("IRR", cv2.resize(cv2.cvtColor(copy(img_IRR),cv2.COLOR_RGB2BGR),imgsz))
+                cv2.imshow("SRR", cv2.resize(cv2.cvtColor(copy(img_SRR),cv2.COLOR_RGB2BGR),imgsz))
+                cv2.waitKey(1)
+
             if i>=frames_to_record:
                 break
-            if not wait_for_input:
-                time.sleep(args.time_to_wait)
 import argparse  
 import sys         
 def parse_config():
