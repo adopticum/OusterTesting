@@ -15,7 +15,7 @@ from copy import copy
 import open3d as o3d
 import math
 import os
-
+LIMITS = {"ir":6000,"reflectivity": 255, "range":25000,"signal":255}
 def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503): 
     """
     Set sensor configuration.
@@ -273,7 +273,6 @@ def stream_live(args):
         comp_xyzr = compress_mid_dim(xyzr)
         comp_xyzr = trim_xyzr(comp_xyzr,[4,4,4])
         vis, geo = initialize_o3d_plot(comp_xyzr)
-        limits = {"ir":6000,"reflectivity": 255, "range":25000,"signal":255}
         plt.ion()
         # start the stream
         for i,scan in enumerate(stream):
@@ -283,18 +282,19 @@ def stream_live(args):
             xyz = get_xyz(stream,scan)
             xyzr = convert_to_xyzr(xyz,signal)
             comp_xyzr = compress_mid_dim(xyzr)
-            comp_xyzr = trim_xyzr(comp_xyzr,[limits["range"]/1000,limits["range"]/1000,limits["range"]/1000])
+            comp_xyzr = trim_xyzr(comp_xyzr,[LIMITS["range"]/1000,LIMITS["range"]/1000,LIMITS["range"]/1000])
             update_open3d_live(geo,comp_xyzr,vis)
-            img = signal_ref_range(stream,scan,limits)
-            print(f"Average: \signal {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
+            img = signal_ref_range(stream,scan,LIMITS)
+            print(f"Average: \nsignal {np.mean(img[:,:,0])*LIMITS['signal']} \nReflectivity {np.mean(img[:,:,1])*LIMITS['reflectivity']}\nRange {np.mean(img[:,:,2])*LIMITS['range']} ")
             # if i == 0:
             #     #fig = plt.figure(figsize=(10,10))
             #     cv2.imshow("Lidar",img)
+            imgsz = [1280,640]
             print(scan.h)
-            cv2.imshow("Lidar",cv2.cvtColor(img,cv2.COLOR_BGR2RGB))
-            cv2.imshow("signal",cv2.cvtColor(img[:,:,0],cv2.COLOR_GRAY2RGB))
-            cv2.imshow("Range",cv2.cvtColor(img[:,:,1],cv2.COLOR_GRAY2RGB))
-            cv2.imshow("Reflectivity",cv2.cvtColor(img[:,:,2],cv2.COLOR_GRAY2RGB))
+            cv2.imshow("Lidar",cv2.resize(cv2.cvtColor(img,cv2.COLOR_BGR2RGB),imgsz))
+            cv2.imshow("signal",cv2.resize(cv2.cvtColor(img[:,:,0],cv2.COLOR_BGR2RGB),imgsz))
+            cv2.imshow("Range",cv2.resize(cv2.cvtColor(img[:,:,2],cv2.COLOR_BGR2RGB),imgsz))
+            cv2.imshow("Reflectivity",cv2.resize(cv2.cvtColor(img[:,:,1],cv2.COLOR_BGR2RGB),imgsz))
             cv2.waitKey(1)
             
             
@@ -507,46 +507,46 @@ def plot_open3d_pc(xyzr):
         vis.update_renderer()
         time.sleep(0.1) # Time between clouds
 
-def ir_ref_range(source,scan,limits:dict):
+def ir_ref_range(source,scan):
     
     near_ir = client.destagger(source.metadata,scan.field(client.ChanField.NEAR_IR))
-    if limits["ir"] not in [0,None]:
-        near_ir = np.divide(near_ir,limits["ir"], dtype=np.float32)
+    if LIMITS["ir"] not in [0,None]:
+        near_ir = np.divide(near_ir,LIMITS["ir"], dtype=np.float32)
         near_ir = np.where(near_ir<1,near_ir,1)
     # print(f"max near_ir: {near_ir.max()} at: {np.unravel_index(near_ir.argmax(),near_ir.shape)}")
     # print(f"min near_ir: {near_ir.min()} at: {np.unravel_index(near_ir.argmin(),near_ir.shape)}")
     ref = client.destagger(source.metadata,scan.field(client.ChanField.REFLECTIVITY))
-    if limits["reflectivity"] not in [0,None]:
-        ref = np.divide(ref,limits["reflectivity"]) if limits["reflectivity"] else ref
+    if LIMITS["reflectivity"] not in [0,None]:
+        ref = np.divide(ref,LIMITS["reflectivity"]) if LIMITS["reflectivity"] else ref
         ref = np.where(ref<1,ref,1)
     # print(f"max ref: {ref.max()} at: {np.unravel_index(ref.argmax(),ref.shape)}")
     # print(f"min ref: {ref.min()} at: {np.unravel_index(ref.argmin(),ref.shape)}")
     range_ous = client.destagger(source.metadata,scan.field(client.ChanField.RANGE))
-    if limits["range"] not in [0,None]:
-        range_ous = np.divide(range_ous,limits["range"])
+    if LIMITS["range"] not in [0,None]:
+        range_ous = np.divide(range_ous,LIMITS["range"])
         range_ous = np.where(range_ous<1,range_ous,1)
     
     # print(f"max range: {range_ous.max()} at: {np.unravel_index(range_ous.argmax(),range_ous.shape)}")
     # print(f"min range: {range_ous.min()} at: {np.unravel_index(range_ous.argmin(),range_ous.shape)}")
     stack = np.stack([near_ir,ref,range_ous],axis=2).astype(np.float32)
     return stack
-def signal_ref_range(source,scan,limits:dict):
+def signal_ref_range(source,scan):
     
     signal = client.destagger(source.metadata,scan.field(client.ChanField.SIGNAL))
-    if limits["signal"] not in [0,None]:
-        signal = np.divide(signal,limits["signal"], dtype=np.float32)
+    if LIMITS["signal"] not in [0,None]:
+        signal = np.divide(signal,LIMITS["signal"], dtype=np.float32)
         signal = np.where(signal<1,signal,1)
     # print(f"max near_ir: {near_ir.max()} at: {np.unravel_index(near_ir.argmax(),near_ir.shape)}")
     # print(f"min near_ir: {near_ir.min()} at: {np.unravel_index(near_ir.argmin(),near_ir.shape)}")
     ref = client.destagger(source.metadata,scan.field(client.ChanField.REFLECTIVITY))
-    if limits["reflectivity"] not in [0,None]:
-        ref = np.divide(ref,limits["reflectivity"]) if limits["reflectivity"] else ref
+    if LIMITS["reflectivity"] not in [0,None]:
+        ref = np.divide(ref,LIMITS["reflectivity"]) if LIMITS["reflectivity"] else ref
         ref = np.where(ref<1,ref,1)
     # print(f"max ref: {ref.max()} at: {np.unravel_index(ref.argmax(),ref.shape)}")
     # print(f"min ref: {ref.min()} at: {np.unravel_index(ref.argmin(),ref.shape)}")
     range_ous = client.destagger(source.metadata,scan.field(client.ChanField.RANGE))
-    if limits["range"] not in [0,None]:
-        range_ous = np.divide(range_ous,limits["range"])
+    if LIMITS["range"] not in [0,None]:
+        range_ous = np.divide(range_ous,LIMITS["range"])
         range_ous = np.where(range_ous<1,range_ous,1)
     
     # print(f"max range: {range_ous.max()} at: {np.unravel_index(range_ous.argmax(),range_ous.shape)}")
@@ -699,7 +699,7 @@ def parse_config():
 
 
 if __name__ == "__main__":
-    stream_live(parse_config())
+    record_cv2_images_dual(parse_config())
     #python3 utils_ouster.py --scene_name "Testing" --no-wait_for_input --time_to_wait 4 --frames_to_record 10
     #filename,_ = record_lidar_seq(seq_length=5)
     #filename = "../lidar_scans/Huuuman"
