@@ -402,8 +402,8 @@ def get_xyz(source,scan,trim=None):
 
     #xyz  = xyzlut(scan)
     if trim is not None:
-        indices = np.nonzero((sum((abs(xyz[:,:,0])<trim[0],abs(xyz[:,:,1])<trim[1],abs(xyz[:,:,2])<trim[2]))))[0].tolist() 
-        print(indices)
+        indices = np.nonzero((sum((abs(xyz[:,:,0])<trim[0],abs(xyz[:,:,1])<trim[1],abs(xyz[:,:,2])<trim[2]))))[0].tolist()
+         
         xyz = xyz[indices,:]
     return xyz
 
@@ -574,7 +574,7 @@ def record_cv2_images(args):
         config = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
     # create a stream object
     print(lidar_port,imu_port,hostname)
-    save_path = f"../lidarImages/{args.scene_name}"
+    save_path = f"../lidarImages/Ir-Ref-Range{args.scene_name}"
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     else:
@@ -604,7 +604,70 @@ def record_cv2_images(args):
             xyz = get_xyz(stream,scan)
             xyzr = convert_to_xyzr(xyz,signal)
             comp_xyzr = compress_mid_dim(xyzr)
-            comp_xyzr = trim_xyzr(comp_xyzr,[limits["range"]/1000,limits["range"]/1000,limits["range"]/1000])
+            comp_xyzr = trim_xyzr(comp_xyzr,[limits["range"]/1000,limits["range"]/1000,limits["range"]/1000]) # Convert to meters
+            #update_open3d_live(geo,comp_xyzr,vis)
+            img = ir_ref_range(stream,scan,limits)
+            #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
+            filename = f"{save_path}/image_{i}.jpg"
+            cv2.imshow("Recording", cv2.cvtColor(copy(img),cv2.COLOR_RGB2BGR))
+            cv2.waitKey(1)
+            cv2.imwrite(filename,cv2.cvtColor(img*255,cv2.COLOR_RGB2BGR))
+            if i>=frames_to_record:
+                break
+            if not wait_for_input:
+                time.sleep(args.time_to_wait)
+def record_cv2_images_dual(args):
+    """
+    Stream Live from sensor belonging to hostname, given a specified config.
+    @param config: SensorConfig object
+    @param hostname: string
+    @param lidar_port: int (default 7502)
+    @param imu_port: int (default 7503)
+    """
+    lidar_port = args.lidar_port
+    imu_port = args.imu_port
+    hostname = args.hostname
+    host_ip = args.host_ip
+    frames_to_record = args.frames_to_record
+    #plt.ion()
+    if host_ip is not None:
+        config = sensor_config(hostname=host_ip,lidar_port=lidar_port,imu_port=imu_port)
+        hostname = host_ip
+    elif hostname is not None:
+        config = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
+    # create a stream object
+    print(lidar_port,imu_port,hostname)
+    save_path = f"../lidarImages/Ir-Ref-Range{args.scene_name}"
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    else:
+        print(f"{save_path} already exists")
+        save_path = f"{save_path}{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        print(f"Saving to {save_path}")
+        os.mkdir(save_path)
+    print("Start Lidar Stream:")
+    with closing(client.Scans.stream(hostname, lidar_port,
+                                    complete=True)) as stream:
+        first_scan = next(iter(stream))
+        xyz = get_xyz(stream,first_scan)
+        signal = get_signal_reflection(stream,first_scan)
+        xyzr = convert_to_xyzr(xyz,signal)
+        comp_xyzr = compress_mid_dim(xyzr)
+        comp_xyzr = trim_xyzr(comp_xyzr,[25,25,25])
+        wait_for_input = args.wait_for_input
+        #vis, geo = initialize_o3d_plot(comp_xyzr)
+        limits = {"ir":6000,"reflectivity": 255, "range":25000}
+        # start the stream
+        for i,scan in enumerate(stream):
+            if wait_for_input:
+                input("Press Enter to Record...")
+            # uncomment if you'd like to see frame id printed
+            # print("frame id: {} ".format(scan.frame_id))
+            signal = get_signal_reflection(stream,scan)
+            xyz = get_xyz(stream,scan)
+            xyzr = convert_to_xyzr(xyz,signal)
+            comp_xyzr = compress_mid_dim(xyzr)
+            comp_xyzr = trim_xyzr(comp_xyzr,[limits["range"]/1000,limits["range"]/1000,limits["range"]/1000]) # Convert to meters
             #update_open3d_live(geo,comp_xyzr,vis)
             img = ir_ref_range(stream,scan,limits)
             #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
