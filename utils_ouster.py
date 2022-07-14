@@ -1,4 +1,5 @@
 from mimetypes import init
+from pydoc import doc
 from anyio import current_time
 from ouster import client, pcap
 from contextlib import closing
@@ -643,7 +644,12 @@ def record_cv2_images(args):
 
             if i>=frames_to_record:
                 break
-            
+
+def count_down():
+    start = time.monotonic()
+    for i in range(3):
+        print(3-i)
+        time.sleep(1)
 def record_cv2_images_dual(args):
     """
     Stream Live from sensor belonging to hostname, given a specified config.
@@ -652,6 +658,7 @@ def record_cv2_images_dual(args):
     @param lidar_port: int (default 7502)
     @param imu_port: int (default 7503)
     """
+    parent_path = "../lidarImages/New-Data"
     lidar_port = args.lidar_port
     imu_port = args.imu_port
     hostname = args.hostname
@@ -665,8 +672,8 @@ def record_cv2_images_dual(args):
         config = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
     # create a stream object
     print(lidar_port,imu_port,hostname)
-    save_path_IRR = f"../lidarImages/Ir-Ref-Range/{args.scene_name}"
-    save_path_SRR = f"../lidarImages/Signal-Ref-Range/{args.scene_name}"
+    save_path_IRR = f"{parent_path}/Ir-Ref-Range/{args.scene_name}"
+    save_path_SRR = f"{parent_path}/Signal-Ref-Range/{args.scene_name}"
     if not os.path.exists(save_path_IRR):
         os.makedirs(save_path_IRR)
     else:
@@ -699,7 +706,10 @@ def record_cv2_images_dual(args):
         prev_time = 0
         ttw = args.time_to_wait if args.time_to_wait is not None else 0
         imgsz = [1280,640]
+        if not wait_for_input:
+            count_down()
         for scan in stream:
+        
             if wait_for_input:
                 input("Press Enter to Record...")
             # uncomment if you'd like to see frame id printed
@@ -732,7 +742,7 @@ def record_cv2_images_dual(args):
                 cv2.imshow("IRR", cv2.resize(cv2.cvtColor(copy(img_IRR),cv2.COLOR_RGB2BGR),imgsz))
                 cv2.imshow("SRR", cv2.resize(cv2.cvtColor(copy(img_SRR),cv2.COLOR_RGB2BGR),imgsz))
                 cv2.waitKey(1)
-
+            print(f"Recorded frame {i}/{frames_to_record}")
             if i>=frames_to_record:
                 break
 import argparse  
