@@ -613,7 +613,9 @@ def record_cv2_images(args):
                 input("Press Enter to Record...")
             # uncomment if you'd like to see frame id printed
             # print("frame id: {} ".format(scan.frame_id))
-            if time.monotonic() - prev_time > ttw or wait_for_input:
+            current_time = time.monotonic()
+            if current_time - prev_time > ttw or wait_for_input:
+                prev_time = current_time
                 signal = get_signal_reflection(stream,scan)
                 xyz = get_xyz(stream,scan)
                 xyzr = convert_to_xyzr(xyz,signal)
