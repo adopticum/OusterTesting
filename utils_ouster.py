@@ -728,8 +728,8 @@ def record_cv2_images_dual(args):
                 #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
                 filename_IRR = f"{save_path_IRR}/image_{i}.jpg"
                 filename_SRR = f"{save_path_SRR}/image_{i}.jpg"
-                cv2.imwrite(filename_SRR,cv2.cvtColor(img_SRR*255,cv2.COLOR_RGB2BGR))
-                cv2.imwrite(filename_IRR,cv2.cvtColor(img_IRR*255,cv2.COLOR_RGB2BGR))
+                cv2.imwrite(filename_SRR,cv2.resize(cv2.cvtColor(copy(img_SRR)*255,cv2.COLOR_RGB2BGR),imgsz))
+                cv2.imwrite(filename_IRR,cv2.resize(cv2.cvtColor(copy(img_IRR)*255,cv2.COLOR_RGB2BGR),imgsz))
 
                 cv2.imshow("IRR", cv2.resize(cv2.cvtColor(copy(img_IRR),cv2.COLOR_RGB2BGR),imgsz))
                 cv2.imshow("SRR", cv2.resize(cv2.cvtColor(copy(img_SRR),cv2.COLOR_RGB2BGR),imgsz))
