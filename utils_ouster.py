@@ -1,8 +1,9 @@
+from calendar import c
 from mimetypes import init
 from pydoc import doc
 from anyio import current_time
 from ouster import client, pcap
-from contextlib import closing
+from contextlib import closing, ExitStack
 from datetime import datetime as dt
 import cv2
 import matplotlib.pyplot as plt
@@ -18,7 +19,7 @@ import open3d as o3d
 import math
 import os
 LIMITS = {"ir":6000,"reflectivity": 255, "range":25000,"signal":255}
-def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503): 
+def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503,phase_lock =None): 
     """
     Set sensor configuration.
     @param hostname: sensor hostname
@@ -36,6 +37,9 @@ def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port
     config.lidar_mode = client.LidarMode.MODE_1024x20
     config.udp_port_lidar = lidar_port
     config.udp_port_imu = imu_port
+    if phase_lock is not None:
+        config.phase_lock_enable = True
+        config.phase_lock_offset = phase_lock
 
     # set the config on sensor, using appropriate flags
     client.set_config(hostname, config, persist=True, udp_dest_auto=True)
@@ -245,6 +249,56 @@ def process_lidar_scan(scan_path=None):
         if files.endswith("FS.npy"):
             print(f"Processing lidar data from file: {files}")
             scn = np.load(f"{scan_path}/{files}")
+
+def offset_pc(xyz:np.ndarray, positions:list):
+    """
+    Offset point cloud.
+    @param xyz: numpy array (Nx3)
+    @param positions: list of [x,y,z]
+    """
+    xyz = np.add(xyz,positions)
+    return xyz
+def combine_clouds(xyzr:list):
+    """
+    Combine point cloud and lidar scan.
+    @param xyzr: list[numpy array (Nx4)]
+    """
+    xyzr = np.concatenate(xyzr,axis=0)
+    return xyzr
+def stream_from_multiple(args):
+    """
+    Stream lidar data from multiple ouster sensors.
+    """
+    lidar_ports = args.lidar_port
+    imu_ports = args.imu_port
+    hostnames = args.hostname if len(args.hostname)>0 else [None for ip in args.host_ip]
+    host_ips = args.host_ip
+    phase_locking = args.phase_locking
+    stream_time = args.stream_time
+    offsets = np.array([args.relative_position,0])
+    configs = []
+    for i,(hostname,host_ip,lidar_port,imu_port) in enumerate(zip(hostnames,host_ips,lidar_ports,imu_ports)):
+        if hostname is not None:
+            configs[i] = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
+        elif host_ip is not None:
+            configs[i] = sensor_config(hostname=host_ip,lidar_port=lidar_port,imu_port=imu_port)
+            hostname[i] = host_ip
+    with ExitStack() as stack:
+        streams = [stack.enter_context(closing(client.Scans.stream(hostname, lidar_port, complete=False))) for hostname,lidar_port in zip(hostnames,lidar_ports)]
+        start_time = time.monotonic()
+        clouds = []
+        while time.monotonic()-start_time<stream_time:
+            for i,stream in enumerate(streams):
+                scan = next(stream)
+                xyz = get_xyz(stream,scan)
+                signal = get_signal_reflection(stream,scan)
+                xyzr = convert_to_xyzr(xyz,signal)
+                comp_xyzr = compress_mid_dim(xyzr)
+                comp_xyzr = trim_xyzr(comp_xyzr,[4,4,4])
+                comp_xyzr = offset_pc(comp_xyzr,offsets[i])
+                clouds.append(comp_xyzr)
+            combined_cloud = combine_clouds(clouds)
+            print(f"Combined cloud shape: {combined_cloud.shape}")
 def stream_live(args):
     """
     Stream Live from sensor belonging to hostname, given a specified config.
@@ -749,19 +803,33 @@ import argparse
 import sys         
 def parse_config():
     parser = argparse.ArgumentParser(description='arg parser') 
-    parser.add_argument('--hostname', type=str, default=None, help='hostname')
-    parser.add_argument('--lidar_port', type=int, default=7502, help='lidar port')
-    parser.add_argument('--imu_port', type=int, default=7503, help='imu port')
-    parser.add_argument('--host_ip', type=str, default="192.168.200.78", help='ip address of host')
+    #parser.add_argument('--hostname', type=str, default=None, help='hostname')
+    parser.add_argument('--hostname', nargs="+", default=None, help='hostname/(s)')
+    #parser.add_argument('--lidar_port', type=int, default=7502, help='lidar port')
+    parser.add_argument('--lidar_port', nargs="+", default=[7502], help='lidar port/(s)')
+    #parser.add_argument('--imu_port', type=int, default=7503, help='imu port')
+    parser.add_argument('--imu_port', nargs="+", default=[7503], help='imu port/(s)')
+    #parser.add_argument('--host_ip', type=str, default="192.168.200.78", help='ip address of host')
+    parser.add_argument('--host_ip', nargs="+", default=["192.168.200.78"],help='ip address of host')
+    parser.add_argument('--phase_locking', nargs="+", default=[0], help='where to phase lock each sensor')
     parser.add_argument('--scene_name', type=str, default='scene_1', help='scene name')
     parser.add_argument('--frames_to_record', type=int, default=25, help='frames to record')
+    parser.add_argument('--stream_time', type=int, default=100, help='time to stream live')
     parser.add_argument('--time_to_wait', type=float, default=3, help='time to wait between images')
+    parser.add_argument('--relative_position',nargs="+",default=[0,0,0],help='relative position of lidar sensor 2 in scene')
     if sys.version_info >= (3,9):
         parser.add_argument('--wait_for_input', action=argparse.BooleanOptionalAction)
     else:
         parser.add_argument('--wait_for_input', action='store_true')
         parser.add_argument('--no-wait_for_input', action='store_false')
-    return parser.parse_args()
+    args = parser.parse_args()
+    if len(args.hostname)==1:
+        args.hostname = args.hostname[0]
+        args.lidar_port = args.lidar_port[0]
+        args.imu_port = args.imu_port[0]
+        args.host_ip = args.host_ip[0]
+
+    return args
 
 
 if __name__ == "__main__":
