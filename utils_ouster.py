@@ -18,7 +18,8 @@ from copy import copy
 import open3d as o3d
 import math
 import os
-LIMITS = {"ir":6000,"reflectivity": 255, "range":25000,"signal":255}
+LIMITS_IRR = {"ir":6000,"reflectivity": 255, "range":25000,"signal":255} #255 for IRR #128 for SRR¨
+LIMITS_SRR = {"ir":6000,"reflectivity": 128, "range":25000,"signal":128}
 def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503,phase_lock =None): 
     """
     Set sensor configuration.
@@ -338,10 +339,10 @@ def stream_live(args):
             xyz = get_xyz(stream,scan)
             xyzr = convert_to_xyzr(xyz,signal)
             comp_xyzr = compress_mid_dim(xyzr)
-            comp_xyzr = trim_xyzr(comp_xyzr,[LIMITS["range"]/1000,LIMITS["range"]/1000,LIMITS["range"]/1000])
+            comp_xyzr = trim_xyzr(comp_xyzr,[LIMITS_IRR["range"]/1000,LIMITS_IRR["range"]/1000,LIMITS_IRR["range"]/1000])
             update_open3d_live(geo,comp_xyzr,vis)
-            img = signal_ref_range(stream,scan,LIMITS)
-            print(f"Average: \nsignal {np.mean(img[:,:,0])*LIMITS['signal']} \nReflectivity {np.mean(img[:,:,1])*LIMITS['reflectivity']}\nRange {np.mean(img[:,:,2])*LIMITS['range']} ")
+            img = signal_ref_range(stream,scan,LIMITS_IRR)
+            print(f"Average: \nsignal {np.mean(img[:,:,0])*LIMITS_IRR['signal']} \nReflectivity {np.mean(img[:,:,1])*LIMITS_IRR['reflectivity']}\nRange {np.mean(img[:,:,2])*LIMITS_IRR['range']} ")
             # if i == 0:
             #     #fig = plt.figure(figsize=(10,10))
             #     cv2.imshow("Lidar",img)
@@ -566,20 +567,20 @@ def plot_open3d_pc(xyzr):
 def ir_ref_range(source,scan):
     
     near_ir = client.destagger(source.metadata,scan.field(client.ChanField.NEAR_IR))
-    if LIMITS["ir"] not in [0,None]:
-        near_ir = np.divide(near_ir,LIMITS["ir"], dtype=np.float32)
+    if LIMITS_IRR["ir"] not in [0,None]:
+        near_ir = np.divide(near_ir,LIMITS_IRR["ir"], dtype=np.float32)
         near_ir = np.where(near_ir<1,near_ir,1)
     # print(f"max near_ir: {near_ir.max()} at: {np.unravel_index(near_ir.argmax(),near_ir.shape)}")
     # print(f"min near_ir: {near_ir.min()} at: {np.unravel_index(near_ir.argmin(),near_ir.shape)}")
     ref = client.destagger(source.metadata,scan.field(client.ChanField.REFLECTIVITY))
-    if LIMITS["reflectivity"] not in [0,None]:
-        ref = np.divide(ref,LIMITS["reflectivity"]) if LIMITS["reflectivity"] else ref
+    if LIMITS_IRR["reflectivity"] not in [0,None]:
+        ref = np.divide(ref,LIMITS_IRR["reflectivity"]) if LIMITS_IRR["reflectivity"] else ref
         ref = np.where(ref<1,ref,1)
     # print(f"max ref: {ref.max()} at: {np.unravel_index(ref.argmax(),ref.shape)}")
     # print(f"min ref: {ref.min()} at: {np.unravel_index(ref.argmin(),ref.shape)}")
     range_ous = client.destagger(source.metadata,scan.field(client.ChanField.RANGE))
-    if LIMITS["range"] not in [0,None]:
-        range_ous = np.divide(range_ous,LIMITS["range"])
+    if LIMITS_IRR["range"] not in [0,None]:
+        range_ous = np.divide(range_ous,LIMITS_IRR["range"])
         range_ous = np.where(range_ous<1,range_ous,1)
     
     # print(f"max range: {range_ous.max()} at: {np.unravel_index(range_ous.argmax(),range_ous.shape)}")
@@ -589,20 +590,20 @@ def ir_ref_range(source,scan):
 def signal_ref_range(source,scan):
     
     signal = client.destagger(source.metadata,scan.field(client.ChanField.SIGNAL))
-    if LIMITS["signal"] not in [0,None]:
-        signal = np.divide(signal,LIMITS["signal"], dtype=np.float32)
+    if LIMITS_SRR["signal"] not in [0,None]:
+        signal = np.divide(signal,LIMITS_IRR["signal"], dtype=np.float32)
         signal = np.where(signal<1,signal,1)
     # print(f"max near_ir: {near_ir.max()} at: {np.unravel_index(near_ir.argmax(),near_ir.shape)}")
     # print(f"min near_ir: {near_ir.min()} at: {np.unravel_index(near_ir.argmin(),near_ir.shape)}")
     ref = client.destagger(source.metadata,scan.field(client.ChanField.REFLECTIVITY))
-    if LIMITS["reflectivity"] not in [0,None]:
-        ref = np.divide(ref,LIMITS["reflectivity"]) if LIMITS["reflectivity"] else ref
+    if LIMITS_SRR["reflectivity"] not in [0,None]:
+        ref = np.divide(ref,LIMITS_SRR["reflectivity"]) if LIMITS_SRR["reflectivity"] else ref
         ref = np.where(ref<1,ref,1)
     # print(f"max ref: {ref.max()} at: {np.unravel_index(ref.argmax(),ref.shape)}")
     # print(f"min ref: {ref.min()} at: {np.unravel_index(ref.argmin(),ref.shape)}")
     range_ous = client.destagger(source.metadata,scan.field(client.ChanField.RANGE))
-    if LIMITS["range"] not in [0,None]:
-        range_ous = np.divide(range_ous,LIMITS["range"])
+    if LIMITS_SRR["range"] not in [0,None]:
+        range_ous = np.divide(range_ous,LIMITS_SRR["range"])
         range_ous = np.where(range_ous<1,range_ous,1)
     
     # print(f"max range: {range_ous.max()} at: {np.unravel_index(range_ous.argmax(),range_ous.shape)}")
@@ -657,7 +658,7 @@ def record_cv2_images(args):
         comp_xyzr = trim_xyzr(comp_xyzr,[25,25,25])
         wait_for_input = args.wait_for_input
         #vis, geo = initialize_o3d_plot(comp_xyzr)
-        limits = LIMITS
+        limits = LIMITS_IRR
         prev_time = time.monotonic()
         # start the stream
         i = 0
@@ -754,7 +755,7 @@ def record_cv2_images_dual(args):
         comp_xyzr = trim_xyzr(comp_xyzr,[25,25,25])
         wait_for_input = args.wait_for_input
         #vis, geo = initialize_o3d_plot(comp_xyzr)
-        limits = {"ir":6000,"reflectivity": 255, "range":25000}
+        LIMITS_IRR = {"ir":6000,"reflectivity": 255, "range":25000}
         # start the stream
         i = 0
         prev_time = 0
@@ -775,7 +776,7 @@ def record_cv2_images_dual(args):
                 xyz = get_xyz(stream,scan)
                 xyzr = convert_to_xyzr(xyz,signal)
                 comp_xyzr = compress_mid_dim(xyzr)
-                comp_xyzr = trim_xyzr(comp_xyzr,[limits["range"]/1000,limits["range"]/1000,limits["range"]/1000]) # Convert to meters
+                comp_xyzr = trim_xyzr(comp_xyzr,[LIMITS_IRR["range"]/1000,LIMITS_IRR["range"]/1000,LIMITS_IRR["range"]/1000]) # Convert to meters
                 #update_open3d_live(geo,comp_xyzr,vis)
                 img_IRR = ir_ref_range(stream,scan)
                 img_SRR = signal_ref_range(stream,scan)
