@@ -276,30 +276,78 @@ def stream_from_multiple(args):
     host_ips = args.host_ip
     phase_locking = args.phase_locking
     stream_time = args.stream_time
-    offsets = np.array([args.relative_position,0])
+    offsets = args.relative_position
+    print(offsets)
+
+    offsets = [[float(x) for x in lst]+[0.0] for lst in offsets]
+    
+    # print(f"Offsets: {offsets},shape: {offsets.shape}")
+    # offsets = np.append(offsets,np.zeros((1,1)),axis=0)
     configs = []
     for i,(hostname,host_ip,lidar_port,imu_port) in enumerate(zip(hostnames,host_ips,lidar_ports,imu_ports)):
+        print(f"Streaming from {hostname}:Lidar port {lidar_port}, IMU port {imu_port}")
         if hostname is not None:
-            configs[i] = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
+            configs.append(sensor_config(hostname=hostname,lidar_port=int(lidar_port),imu_port=int(imu_port)))
         elif host_ip is not None:
-            configs[i] = sensor_config(hostname=host_ip,lidar_port=lidar_port,imu_port=imu_port)
+            configs.append(sensor_config(hostname=host_ip,lidar_port=int(lidar_port),imu_port=int(imu_port)))
             hostname[i] = host_ip
     with ExitStack() as stack:
-        streams = [stack.enter_context(closing(client.Scans.stream(hostname, lidar_port, complete=False))) for hostname,lidar_port in zip(hostnames,lidar_ports)]
+        streams = [stack.enter_context(closing(client.Scans.stream(hostname, int(lidar_port), complete=False))) for hostname, lidar_port in zip(hostnames,lidar_ports)]
         start_time = time.monotonic()
         clouds = []
         while time.monotonic()-start_time<stream_time:
-            for i,stream in enumerate(streams):
-                scan = next(stream)
-                xyz = get_xyz(stream,scan)
-                signal = get_signal_reflection(stream,scan)
-                xyzr = convert_to_xyzr(xyz,signal)
-                comp_xyzr = compress_mid_dim(xyzr)
-                comp_xyzr = trim_xyzr(comp_xyzr,[4,4,4])
-                comp_xyzr = offset_pc(comp_xyzr,offsets[i])
-                clouds.append(comp_xyzr)
-            combined_cloud = combine_clouds(clouds)
-            print(f"Combined cloud shape: {combined_cloud.shape}")
+            # scan_64 = next(iter(streams[0]))
+            # scan_128 = next(iter(streams[1]))
+            # xyz_64 = get_xyz(streams[0],scan_64)
+            # xyz_128 = get_xyz(streams[1],scan_128)
+            # signal_64 = get_signal_reflection(streams[0],scan_64)
+            # signal_128 = get_signal_reflection(streams[1],scan_128)
+            # xyzr_64 = convert_to_xyzr(xyz_64,signal_64)
+            # xyzr_128 = convert_to_xyzr(xyz_128,signal_128)
+            # comp_xyzr_64 = compress_mid_dim(xyzr_64)
+            # comp_xyzr_128 = compress_mid_dim(xyzr_128)
+            # comp_xyzr_64 = trim_xyzr(comp_xyzr_64,[4,4,4])
+            # comp_xyzr_128 = trim_xyzr(comp_xyzr_128,[4,4,4])
+            # comp_xyzr_64 = offset_pc(comp_xyzr_64,offsets[0])
+            # comp_xyzr_128 = offset_pc(comp_xyzr_128,offsets[1])
+            # clouds = [comp_xyzr_64,comp_xyzr_128]
+            # for i,stream in enumerate(streams):
+            #     # print("Streaming from:",hostnames[i])
+            #     scan_time = time.monotonic()
+            #     scan = next(iter(stream))
+            #     print(f"Scan time {time.monotonic()-scan_time:.3e}")
+            #     xyz = get_xyz(stream,scan)
+            #     signal = get_signal_reflection(stream,scan)
+            #     xyzr = convert_to_xyzr(xyz,signal)
+            #     comp_xyzr = compress_mid_dim(xyzr)
+            #     comp_xyzr = trim_xyzr(comp_xyzr,[4,4,4])
+            #     comp_xyzr = offset_pc(comp_xyzr,offsets[i])
+            #     clouds.append(comp_xyzr)
+            # print(f"Streaming time: {time.monotonic()-start}")
+            for i,(scan_64,scan_128) in enumerate(zip(streams[0],streams[1])):
+                if i%2==0:
+                    start = time.monotonic()
+                else:
+                    print(f"Streaming time: {time.monotonic()-start:.3e}")
+                xyz_64 = get_xyz(streams[0],scan_64)
+                xyz_128 = get_xyz(streams[1],scan_128)
+                signal_64 = get_signal_reflection(streams[0],scan_64)
+                signal_128 = get_signal_reflection(streams[1],scan_128)
+                xyzr_64 = convert_to_xyzr(xyz_64,signal_64)
+                xyzr_128 = convert_to_xyzr(xyz_128,signal_128)
+                comp_xyzr_64 = compress_mid_dim(xyzr_64)
+                comp_xyzr_128 = compress_mid_dim(xyzr_128)
+                comp_xyzr_64 = trim_xyzr(comp_xyzr_64,[4,4,4])
+                comp_xyzr_128 = trim_xyzr(comp_xyzr_128,[4,4,4])
+                comp_xyzr_64 = offset_pc(comp_xyzr_64,offsets[0])
+                comp_xyzr_128 = offset_pc(comp_xyzr_128,offsets[1])
+                clouds = [comp_xyzr_64,comp_xyzr_128]
+                combined_cloud = combine_clouds(clouds)
+                if i==0:
+                    vis, geo = initialize_o3d_plot(combined_cloud)
+                else:
+                    update_open3d_live(geo,combined_cloud,vis)
+                print(f"Combined cloud shape: {combined_cloud.shape}")
 def stream_live(args):
     """
     Stream Live from sensor belonging to hostname, given a specified config.
@@ -817,13 +865,15 @@ def parse_config():
     parser.add_argument('--frames_to_record', type=int, default=25, help='frames to record')
     parser.add_argument('--stream_time', type=int, default=100, help='time to stream live')
     parser.add_argument('--time_to_wait', type=float, default=3, help='time to wait between images')
-    parser.add_argument('--relative_position',nargs="+",default=[0,0,0],help='relative position of lidar sensor 2 in scene')
+    parser.add_argument('--relative_position',nargs="+",action='append',help='relative position of lidar sensor 2 in scene')
     if sys.version_info >= (3,9):
         parser.add_argument('--wait_for_input', action=argparse.BooleanOptionalAction)
     else:
         parser.add_argument('--wait_for_input', action='store_true')
         parser.add_argument('--no-wait_for_input', action='store_false')
     args = parser.parse_args()
+    if args.hostname is None:
+        args.hostname = args.host_ip
     if len(args.hostname)==1:
         args.hostname = args.hostname[0]
         args.lidar_port = args.lidar_port[0]
@@ -834,7 +884,7 @@ def parse_config():
 
 
 if __name__ == "__main__":
-    record_cv2_images_dual(parse_config())
+    stream_from_multiple(parse_config()) # py utils_ouster.py --lidar_port 7502 7504 --imu_port 7503 7505  --host_ip 192.168.200.78 192.168.200.79 --stream_time 500 --relative_position 0 0 0 --relative_position -4.40 0 0
     #python3 utils_ouster.py --scene_name "Testing" --no-wait_for_input --time_to_wait 4 --frames_to_record 10
     #filename,_ = record_lidar_seq(seq_length=5)
     #filename = "../lidar_scans/Huuuman"
