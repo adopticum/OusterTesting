@@ -803,7 +803,7 @@ def record_cv2_images_dual(args):
         comp_xyzr = trim_xyzr(comp_xyzr,[25,25,25])
         wait_for_input = args.wait_for_input
         #vis, geo = initialize_o3d_plot(comp_xyzr)
-        LIMITS_IRR = {"ir":6000,"reflectivity": 255, "range":25000}
+        #LIMITS_IRR = {"ir":6000,"reflectivity": 255, "range":25000}
         # start the stream
         i = 0
         prev_time = 0
@@ -838,6 +838,7 @@ def record_cv2_images_dual(args):
                 cv2.imshow("SRR", cv2.resize(cv2.cvtColor(copy(img_SRR),cv2.COLOR_RGB2BGR),imgsz))
                 cv2.waitKey(1)
                 i += 1
+                print(f"Recorded frame {i}/{frames_to_record}")
             else:
                 img_IRR = ir_ref_range(stream,scan)
                 img_SRR = signal_ref_range(stream,scan)
@@ -845,7 +846,6 @@ def record_cv2_images_dual(args):
                 cv2.imshow("IRR", cv2.resize(cv2.cvtColor(copy(img_IRR),cv2.COLOR_RGB2BGR),imgsz))
                 cv2.imshow("SRR", cv2.resize(cv2.cvtColor(copy(img_SRR),cv2.COLOR_RGB2BGR),imgsz))
                 cv2.waitKey(1)
-            print(f"Recorded frame {i}/{frames_to_record}")
             if i>=frames_to_record:
                 break
 import argparse  
@@ -876,15 +876,16 @@ def parse_config():
         args.hostname = args.host_ip
     if len(args.hostname)==1:
         args.hostname = args.hostname[0]
-        args.lidar_port = args.lidar_port[0]
-        args.imu_port = args.imu_port[0]
+        args.lidar_port = int(args.lidar_port[0])
+        args.imu_port = int(args.imu_port[0])
         args.host_ip = args.host_ip[0]
 
     return args
 
 
 if __name__ == "__main__":
-    stream_from_multiple(parse_config()) # py utils_ouster.py --lidar_port 7502 7504 --imu_port 7503 7505  --host_ip 192.168.200.78 192.168.200.79 --stream_time 500 --relative_position 0 0 0 --relative_position -4.40 0 0
+    #stream_from_multiple(parse_config()) # py utils_ouster.py --lidar_port 7502 7504 --imu_port 7503 7505  --host_ip 192.168.200.78 192.168.200.79 --stream_time 500 --relative_position 0 0 0 --relative_position -4.40 0 0
+    record_cv2_images_dual(parse_config()) 
     #python3 utils_ouster.py --scene_name "Testing" --no-wait_for_input --time_to_wait 4 --frames_to_record 10
     #filename,_ = record_lidar_seq(seq_length=5)
     #filename = "../lidar_scans/Huuuman"
