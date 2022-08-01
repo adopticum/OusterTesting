@@ -885,7 +885,7 @@ def parse_config():
 
 if __name__ == "__main__":
     #stream_from_multiple(parse_config()) # py utils_ouster.py --lidar_port 7502 7504 --imu_port 7503 7505  --host_ip 192.168.200.78 192.168.200.79 --stream_time 500 --relative_position 0 0 0 --relative_position -4.40 0 0
-    record_cv2_images_dual(parse_config()) 
+    record_cv2_images_dual(parse_config()) # py utils_ouster.py --host_ip "192.168.200.79" --lidar_port 7504 --imu_port 7505 --scene_name "GreenHouseNK2" --frames_to_record 35 --time_to_wait 1.5 --no-wait_for_input
     #python3 utils_ouster.py --scene_name "Testing" --no-wait_for_input --time_to_wait 4 --frames_to_record 10
     #filename,_ = record_lidar_seq(seq_length=5)
     #filename = "../lidar_scans/Huuuman"
