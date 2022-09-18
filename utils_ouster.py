@@ -1,8 +1,9 @@
 #from calendar import c
 #from mimetypes import init
+from multiprocessing.sharedctypes import Value
 from pydoc import doc
 from anyio import current_time
-from ouster import client, pcap
+from ouster import client, pcap # pip install ouster-sdk
 from contextlib import closing, ExitStack
 from datetime import datetime as dt
 import cv2
@@ -18,8 +19,10 @@ from copy import copy
 import open3d as o3d
 import math
 import os
-LIMITS_IRR = {"ir":6000,"reflectivity": 255, "range":25000,"signal":255} #255 for IRR #128 for SRR¨
+LIMITS_IRR = {"ir":6000,"reflectivity": 255, "range":25000,"signal":255}
 LIMITS_SRR = {"ir":6000,"reflectivity": 128, "range":25000,"signal":128}
+# 255 for IRR #128 for SRR. These values where used to normalize the image.
+# Should probably have opted to the max value of the data type but not sure how that would be affected the stability.
 def sensor_config(hostname = 'os-122107000535.local',lidar_port = 7502, imu_port = 7503,phase_lock =None): 
     """
     Set sensor configuration.
@@ -82,8 +85,8 @@ def record_lidar_seq(
     if not os.path.exists(scan_path):
         os.mkdir(f"{lidar_folder_path}/{scan_name}")
     # connect to sensor and record lidar/imu packets
-    frames = 0
-    full_seq = []
+    frames = 0 # frame counter
+    full_seq = [] # list to store lidar data
     if fileformat == "npy":
         
         with closing(client.Scans.stream(hostname, lidar_port,
@@ -92,27 +95,25 @@ def record_lidar_seq(
             with tqdm(total=seq_length) as pbar:
                 start = time.time()
                 for seq,scan in enumerate(stream,0):
-                    xyz = get_xyz(stream,scan)
-                    #print(f"xyz shape: {xyz.shape}")
-                    signal = get_signal_reflection(stream,scan)
-                    #print(f"xyz shape: {xyz.shape}")
-                    xyzr = convert_to_xyzr(xyz,signal)
-                    #print(f"xyz shape: {xyz.shape}")
-                    comp_xyzr = compress_mid_dim(xyzr)
-                    #print(f"comp_xyzr shape: {comp_xyzr.shape}")
+                    frames += 1
+                    xyz = get_xyz(stream,scan) # Shape : (azi,horiz,3)
+                    signal = get_signal_reflection(stream,scan) # Shape : (azi,horiz,1)
+                    xyzr = convert_to_xyzr(xyz,signal) # Shape : (azi*horiz=N,4)
+                    comp_xyzr = compress_mid_dim(xyzr) # Shape : (N,4)
                     full_seq.append(comp_xyzr)
-                    save_to_nly(comp_xyzr,scan_path,seq)
-                    #print(f"Time: {time.time()-start} frame {seq}")
+                    save_to_nly(comp_xyzr,scan_path,seq) # Save to npy file as shape (N,4)
                     if not set_frames:
                         p = min(((time.time()-start)/seq_length),1)
-                        pbar.update(p)
+                        pbar.update(p) # Time based progress bar
                         if time.time()-start>seq_length:
                             break
+                    else:
+                        pbar.update(1)
                     if seq>seq_length and set_frames:
                         break
             full_seq = np.asarray(full_seq)
             print(f"Full Seq shape: {full_seq.shape}")
-            save_to_nly(full_seq,f"{scan_path}/FS",0)
+            save_to_nly(full_seq,f"{scan_path}/FS",0) # Save a file of shape (seq_length,azi*horiz,4). This is the full sequence.
     
     elif fileformat == "pcap":
         with closing(client.Sensor(hostname, lidar_port, imu_port,
@@ -120,16 +121,16 @@ def record_lidar_seq(
 
             # make a descriptive filename for metadata/pcap files
 
-            time_part = dt.now().strftime("%Y%m%d_%H%M%S")
+            time_part = dt.now().strftime("%Y%m%d_%H%M%S") # Time stamp
             meta = source.metadata
             fname_base = f"{meta.prod_line}_{meta.sn}_{meta.mode}_{time_part}"
 
             print(f"Saving sensor metadata to: {fname_base}.json")
-            source.write_metadata(f"{fname_base}.json")
+            source.write_metadata(f"{fname_base}.json") # Save metadata
 
             print(f"Writing to: {fname_base}.pcap (Ctrl-C to stop early)")
             source_it = time_limited(seq_length, source)
-            n_packets = pcap.record(source_it, f"{fname_base}.pcap")
+            n_packets = pcap.record(source_it, f"{fname_base}.pcap") # Save pcap file
             print(f"Captured {n_packets} packets")
     return scan_path,frames
 
@@ -149,6 +150,7 @@ def unpack_multi_dim(scan_path):
     Unpack lidar data from multi-dim array.
     @param scan_path: string (path to lidar scans) 
     """
+    raise NotImplementedError("Untested function. Use at your own risk.")
     scan_path = None
     frame_id = 0
     lst = os.listdir(scan_path)
@@ -170,8 +172,8 @@ def unpack_multi_dim(scan_path):
                 print(f"Ignoring file: {dirs}. Wrong dimensions.")
         elif os.path.isdir(dirs):
             unpack_multi_dim(f"{scan_path}/{dirs}")
-import re
 def sorted_alphanumeric(data):
+    import re
     """
     Sort alphanumeric strings.
     """
@@ -183,10 +185,11 @@ def trim_xyzr(xyzr,trim_thresh):
     """
     Trim lidar data to remove points that are too close to the sensor.
     @param xyzr: numpy array
-    @param trim_thresh: float (threshold distance in meters)
+    @param trim_thresh: list of floats (threshold distance in meters in x,y,z)
+    TODO: Speed test. This is probably slow.
     """
     #indices = np.where(xyzr[:,0]>trim_thresh[0] and xyzr[:,1]>trim_thresh[1] and xyzr[:,2]>trim_thresh[2])
-    return xyzr[(abs(xyzr[:,0])<trim_thresh[0]) * (abs(xyzr[:,1])<trim_thresh[1]) * (abs(xyzr[:,2])<trim_thresh[2]),:]
+    return xyzr[(abs(xyzr[:,0])>trim_thresh[0]) * (abs(xyzr[:,1])>trim_thresh[1]) * (abs(xyzr[:,2])>trim_thresh[2]),:]
 def play_back_recording(seq_dir_path,trim=None):
     """
     Play back lidar data from nly files.
@@ -198,7 +201,7 @@ def play_back_recording(seq_dir_path,trim=None):
     print(f"Playing back lidar data from: {seq_dir_path}")
     dirlist = sorted_alphanumeric(os.listdir(seq_dir_path))
     for i,files in enumerate(dirlist):
-        if files.endswith(".npy") and not files.startswith("FS"):
+        if files.endswith(".npy") and not files.startswith("FS"): # Ignore full sequence file
             xyzr = np.load(f"{seq_dir_path}/{files}")
             print(f"Frame: {files[:-4]}")
             if len(xyzr.shape)==3:
@@ -213,7 +216,6 @@ def play_back_recording(seq_dir_path,trim=None):
             else:
                 update_open3d_live(geo, xyzr,vis)
                 time.sleep(0.15)
-            #time.sleep(0.1)
     
 def play_back_recording_multifile(seq_dir_path):
     """
@@ -228,40 +230,38 @@ def play_back_recording_multifile(seq_dir_path):
             print(f"Plotting lidar data from file: {files}")
             full_seq = np.load(f"{seq_dir_path}/{files}")
             for j,xyzr in enumerate(full_seq):
-                xyzr = np.squeeze(xyzr)
+                xyzr = np.squeeze(xyzr) # Remove extra dimension
                 xyzr = compress_mid_dim(xyzr) if len(xyzr.shape)==3 else xyzr
-                #print(f"xyzr shape: {xyzr.shape}")
                 if j == 0:
                     vis, geo = initialize_o3d_plot(xyzr)
                 else:
                     update_open3d_live(geo, xyzr,vis)
                     time.sleep(1)
-            #time.sleep(0.1)
     
-def process_lidar_scan(scan_path=None):
-    """
-    Process lidar scan data.
-    @param scan_path: string (path to lidar scan folder) containing .npy
-    """
-    if not os.path.exists(scan_path):
-        raise FileNotFoundError(f"{scan_path} does not exist")
-    print(f"Processing lidar data from: {scan_path}")
-    for i,files in enumerate(os.listdir(scan_path)):
-        if files.endswith("FS.npy"):
-            print(f"Processing lidar data from file: {files}")
-            scn = np.load(f"{scan_path}/{files}")
+# def process_lidar_scan(scan_path=None):
+#     """
+#     Process lidar scan data.
+#     @param scan_path: string (path to lidar scan folder) containing .npy
+#     """
+#     if not os.path.exists(scan_path):
+#         raise FileNotFoundError(f"{scan_path} does not exist")
+#     print(f"Processing lidar data from: {scan_path}")
+#     for i,files in enumerate(os.listdir(scan_path)):
+#         if files.endswith("FS.npy"):
+#             print(f"Processing lidar data from file: {files}")
+#             scn = np.load(f"{scan_path}/{files}")
 
 def offset_pc(xyz:np.ndarray, positions:list):
     """
-    Offset point cloud.
+    Offset point cloud. Useful for aligning point clouds if multiple scans are taken.
     @param xyz: numpy array (Nx3)
     @param positions: list of [x,y,z]
     """
     xyz = np.add(xyz,positions)
     return xyz
-def combine_clouds(xyzr:list):
+def combine_clouds(xyzr:list[np.ndarray]):
     """
-    Combine point cloud and lidar scan.
+    Combine point cloud from list of seperate clouds.
     @param xyzr: list[numpy array (Nx4)]
     """
     xyzr = np.concatenate(xyzr,axis=0)
@@ -270,19 +270,16 @@ def stream_from_multiple(args):
     """
     Stream lidar data from multiple ouster sensors.
     """
-    lidar_ports = args.lidar_port
-    imu_ports = args.imu_port
+    lidar_ports = args.lidar_port # List of lidar ports
+    imu_ports = args.imu_port # List of imu ports
     hostnames = args.hostname if len(args.hostname)>0 else [None for ip in args.host_ip]
-    host_ips = args.host_ip
-    phase_locking = args.phase_locking
-    stream_time = args.stream_time
-    offsets = args.relative_position
-    print(offsets)
-
-    offsets = [[float(x) for x in lst]+[0.0] for lst in offsets]
-    
-    # print(f"Offsets: {offsets},shape: {offsets.shape}")
-    # offsets = np.append(offsets,np.zeros((1,1)),axis=0)
+    host_ips = args.host_ip # List of host ips
+    phase_locking = args.phase_locking # List of phase locking, where each sensor is not scanning at the same time
+    stream_time = args.stream_time # How long to stream for
+    offsets = args.relative_position # List of offsets for each sensor
+    assert len(lidar_ports)==len(imu_ports)==len(host_ips)==len(offsets),"Number of lidar ports, imu ports, host ips, and offsets must be the same"
+    offsets = [[float(x) for x in lst]+[0.0] for lst in offsets] # Add 0.0 for z offset, 
+    # TODO: Add support for z offset, easy to implement.
     configs = []
     for i,(hostname,host_ip,lidar_port,imu_port) in enumerate(zip(hostnames,host_ips,lidar_ports,imu_ports)):
         print(f"Streaming from {hostname}:Lidar port {lidar_port}, IMU port {imu_port}")
@@ -291,40 +288,16 @@ def stream_from_multiple(args):
         elif host_ip is not None:
             configs.append(sensor_config(hostname=host_ip,lidar_port=int(lidar_port),imu_port=int(imu_port)))
             hostname[i] = host_ip
-    with ExitStack() as stack:
+        else:
+            raise ValueError("Must provide hostname or host ip")
+    with ExitStack() as stack: # ExitStack allows for multiple context managers to be used. Ouster SDK easily used with context managers.
         streams = [stack.enter_context(closing(client.Scans.stream(hostname, int(lidar_port), complete=False))) for hostname, lidar_port in zip(hostnames,lidar_ports)]
         start_time = time.monotonic()
         clouds = []
         while time.monotonic()-start_time<stream_time:
-            # scan_64 = next(iter(streams[0]))
-            # scan_128 = next(iter(streams[1]))
-            # xyz_64 = get_xyz(streams[0],scan_64)
-            # xyz_128 = get_xyz(streams[1],scan_128)
-            # signal_64 = get_signal_reflection(streams[0],scan_64)
-            # signal_128 = get_signal_reflection(streams[1],scan_128)
-            # xyzr_64 = convert_to_xyzr(xyz_64,signal_64)
-            # xyzr_128 = convert_to_xyzr(xyz_128,signal_128)
-            # comp_xyzr_64 = compress_mid_dim(xyzr_64)
-            # comp_xyzr_128 = compress_mid_dim(xyzr_128)
-            # comp_xyzr_64 = trim_xyzr(comp_xyzr_64,[4,4,4])
-            # comp_xyzr_128 = trim_xyzr(comp_xyzr_128,[4,4,4])
-            # comp_xyzr_64 = offset_pc(comp_xyzr_64,offsets[0])
-            # comp_xyzr_128 = offset_pc(comp_xyzr_128,offsets[1])
-            # clouds = [comp_xyzr_64,comp_xyzr_128]
-            # for i,stream in enumerate(streams):
-            #     # print("Streaming from:",hostnames[i])
-            #     scan_time = time.monotonic()
-            #     scan = next(iter(stream))
-            #     print(f"Scan time {time.monotonic()-scan_time:.3e}")
-            #     xyz = get_xyz(stream,scan)
-            #     signal = get_signal_reflection(stream,scan)
-            #     xyzr = convert_to_xyzr(xyz,signal)
-            #     comp_xyzr = compress_mid_dim(xyzr)
-            #     comp_xyzr = trim_xyzr(comp_xyzr,[4,4,4])
-            #     comp_xyzr = offset_pc(comp_xyzr,offsets[i])
-            #     clouds.append(comp_xyzr)
-            # print(f"Streaming time: {time.monotonic()-start}")
             for i,(scan_64,scan_128) in enumerate(zip(streams[0],streams[1])):
+                # TODO: Generalize to more than 2 sensors, this was quick test. Probably easy. We found no need to use multiple sensors.
+                # TODO: Speed up by using multiprocessing. We found no need to use multiple sensors.
                 if i%2==0:
                     start = time.monotonic()
                 else:
@@ -351,6 +324,7 @@ def stream_from_multiple(args):
 def stream_live(args):
     """
     Stream Live from sensor belonging to hostname, given a specified config.
+    This also streams image representations of the lidar data.
     @param config: SensorConfig object
     @param hostname: string
     @param lidar_port: int (default 7502)
@@ -361,7 +335,6 @@ def stream_live(args):
     hostname = args.hostname
     host_ip = args.host_ip
     frames_to_record = args.frames_to_record
-    #plt.ion()
     if host_ip is not None:
         config = sensor_config(hostname=host_ip,lidar_port=lidar_port,imu_port=imu_port)
         hostname = host_ip
@@ -371,13 +344,6 @@ def stream_live(args):
     print("Start Lidar Stream:")
     with closing(client.Scans.stream(hostname, lidar_port,
                                     complete=False)) as stream:
-        first_scan = next(iter(stream))
-        xyz = get_xyz(stream,first_scan)
-        signal = get_signal_reflection(stream,first_scan)
-        xyzr = convert_to_xyzr(xyz,signal)
-        comp_xyzr = compress_mid_dim(xyzr)
-        comp_xyzr = trim_xyzr(comp_xyzr,[4,4,4])
-        vis, geo = initialize_o3d_plot(comp_xyzr)
         plt.ion()
         # start the stream
         for i,scan in enumerate(stream):
@@ -388,14 +354,14 @@ def stream_live(args):
             xyzr = convert_to_xyzr(xyz,signal)
             comp_xyzr = compress_mid_dim(xyzr)
             comp_xyzr = trim_xyzr(comp_xyzr,[LIMITS_IRR["range"]/1000,LIMITS_IRR["range"]/1000,LIMITS_IRR["range"]/1000])
-            update_open3d_live(geo,comp_xyzr,vis)
+            if i==0:
+                vis, geo = initialize_o3d_plot(comp_xyzr)
+            else:
+                update_open3d_live(geo,comp_xyzr,vis)
             img = signal_ref_range(stream,scan,LIMITS_IRR)
-            print(f"Average: \nsignal {np.mean(img[:,:,0])*LIMITS_IRR['signal']} \nReflectivity {np.mean(img[:,:,1])*LIMITS_IRR['reflectivity']}\nRange {np.mean(img[:,:,2])*LIMITS_IRR['range']} ")
-            # if i == 0:
-            #     #fig = plt.figure(figsize=(10,10))
-            #     cv2.imshow("Lidar",img)
+            # print(f"Average: \nsignal {np.mean(img[:,:,0])*LIMITS_IRR['signal']} \
+                # \nReflectivity {np.mean(img[:,:,1])*LIMITS_IRR['reflectivity']}\nRange {np.mean(img[:,:,2])*LIMITS_IRR['range']} ")
             imgsz = [1280,640]
-            print(scan.h)
             cv2.imshow("Lidar",cv2.resize(cv2.cvtColor(img,cv2.COLOR_BGR2RGB),imgsz))
             cv2.imshow("signal",cv2.resize(cv2.cvtColor(img[:,:,0],cv2.COLOR_BGR2RGB),imgsz))
             cv2.imshow("Range",cv2.resize(cv2.cvtColor(img[:,:,2],cv2.COLOR_BGR2RGB),imgsz))
@@ -427,7 +393,7 @@ def stream_live(args):
                 #plot.set_data(a)
             
             # print(f"T: {end-start} s")
-            if i>=100000:
+            if i>=1000000: # Frames to display @ 20Hz = 50,000 seconds
                 break
 def convert_to_xyzr(xyz,signal):
     """
@@ -446,13 +412,10 @@ def convert_to_xyzr(xyz,signal):
     if len(signal.shape) < 3 or signal.shape[-1] != 1:
         #"Signals should same as xyz except final dim: (n_scans, n_points, 1)")
         signal = np.expand_dims(signal,axis=-1)
-    #print("xyz.shape: {}".format(xyz.shape))
-    #print("signal.shape: {}".format(signal.shape))
     try:
         xyzr = np.concatenate((xyz,signal),axis=-1)
     except:
-        print("Different shapes for xyz and signal. xyz: {}, signal: {}".format(xyz.shape,signal.shape))
-        return None
+        raise ValueError("Different shapes for xyz and signal. xyz: {}, signal: {}".format(xyz.shape,signal.shape))
     return xyzr
 
 def compress_mid_dim(data):
@@ -464,15 +427,18 @@ def compress_mid_dim(data):
     return data.reshape(-1,data.shape[-1])
 
 def trim_data(data,range_limit,source,scan):
+    """
+    Trim data to range limit.
+    @param data: numpy array of xyz or xyzr data
+    @param range_limit: range limit in meters
+    @param source: source containing .metadata
+    @param scan: scan containing .fields
+    """
     range_data = client.destagger(source.metadata,
                             scan.field(client.ChanField.RANGE))
     range_data = compress_mid_dim(np.expand_dims(range_data,axis=-1))
-    #print(range_data.shape)
     indices = np.where(range_data < range_limit)[0].tolist()
-    #print(len(indices))
-    #print(data.shape)
     data = data[indices,:]
-    #print(data.shape)
     return data
 def get_signal_reflection(source,scan):
     """
@@ -535,6 +501,7 @@ def seperate_outliers(cloud,ind):
 
     @return: cloud_outliers: o3d cloud object of outliers
     @return: cloud_inliers: o3d cloud object of inliers
+
     """
     inlier_cloud = cloud.select_by_index(ind)
     outlier_cloud = cloud.select_by_index(ind, invert=True)
@@ -546,12 +513,11 @@ def seperate_outliers(cloud,ind):
 def get_single_example():
     """
     Get a single example from the lidar data.
-
+    scan: Scan object
+    source: Source object
     """
     metadata_path = "/Users/theodorjonsson/GithubProjects/LidarStuff/RecordedData/OS0/json/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.json"
     pcap_path = "/Users/theodorjonsson/GithubProjects/LidarStuff/RecordedData/OS0/pcap/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.pcap"
-    #pcap_path = '/Users/theodorjonsson/GithubProjects/ExampleData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.pcap'
-    #metadata_path = '/Users/theodorjonsson/GithubProjects/ExampleData/OS0-128_Rev-06_fw23_Urban-Drive_Dual-Returns.json'
     with open(metadata_path,'r') as file:
         info = client.SensorInfo(file.read())
     source = pcap.Pcap(pcap_path,info)
@@ -560,19 +526,15 @@ def get_single_example():
     return scan,source
 def initialize_o3d_plot(xyzr):
     """
-    Initialize o3d plot.
+    Initialize standard o3d plot.
     @param xyzr: numpy array of xyzr data to initailize plot with.
-
     @return: o3d.visualization.Visualizer object
     """
     xyzr = xyzr[0] if len(xyzr.shape) > 2 else xyzr
     xyz = xyzr[:,:3]
-    print(xyz)
-    signal = xyzr[:,3:]
     vis = o3d.visualization.Visualizer()
     vis.create_window()
     geo = o3d.geometry.PointCloud()
-    #print("xyz.shape: {}".format(xyz.shape))
     geo.points = o3d.utility.Vector3dVector(xyz)
     vis.add_geometry(geo)
     return vis,geo
@@ -580,13 +542,14 @@ def initialize_o3d_plot(xyzr):
 def update_open3d_live(geo,xyzr,vis):
     """
     Plot lidar data live using open3d.
+    @param geo: o3d.geometry.PointCloud object
     @param xyzr: numpy array of xyzr data
+    @param vis: o3d.visualization.Visualizer object
     """
     xyzr = xyzr[0] if len(xyzr.shape) > 2 else xyzr
 
     xyz = xyzr[:,:3]
     signal = xyzr[:,3:]
-    #print("xyz.shape: {}".format(xyz.shape))
     geo.points = o3d.utility.Vector3dVector(xyz)
     vis.update_geometry(geo)
     vis.poll_events()
@@ -599,156 +562,151 @@ def plot_open3d_pc(xyzr):
     @param xyzr: numpy array of xyzr data. Each cloud is stacked in dim=0. Iterate over dim=0 to visualize all clouds.
     """
     xyz = xyzr[:,:,:3] 
-    signal = xyzr[:,:,3:] # 3: for broadcasting
+    signal = xyzr[:,:,3:] # 3: for correct shape.
     print("Shape of xyz: {}".format(xyz.shape))
     print("Shape of signal: {}".format(signal.shape))
    
     vis,geo = initialize_o3d_plot(xyz[0])
     for i,cloud in enumerate(xyz[1:],1):
-        geo.points = o3d.utility.Vector3dVector(cloud)
-        geo.colors = o3d.utility.Vector3dVector(np.zeros((xyzr.shape[1],3))+signal[i,:,:]) # Not finished
-        vis.update_geometry(geo)
-        vis.poll_events()
-        vis.update_renderer()
+        update_open3d_live(geo,cloud,vis)
         time.sleep(0.1) # Time between clouds
+        # geo.points = o3d.utility.Vector3dVector(cloud)
+        # geo.colors = o3d.utility.Vector3dVector(np.zeros((xyzr.shape[1],3))+signal[i,:,:]) # Not finished
+        # vis.update_geometry(geo)
+        # vis.poll_events()
+        # vis.update_renderer()
 
 def ir_ref_range(source,scan):
-    
+    """
+    Get the image representaion of current scan as an image with near_ir, reflectivity and range.
+    @param source: Source object
+    @param scan: Scan object
+    """
     near_ir = client.destagger(source.metadata,scan.field(client.ChanField.NEAR_IR))
-    if LIMITS_IRR["ir"] not in [0,None]:
+    if LIMITS_IRR["ir"] not in [0,None]: # Normalize near ir channel of image representation to [0,1]
         near_ir = np.divide(near_ir,LIMITS_IRR["ir"], dtype=np.float32)
-        near_ir = np.where(near_ir<1,near_ir,1)
-    # print(f"max near_ir: {near_ir.max()} at: {np.unravel_index(near_ir.argmax(),near_ir.shape)}")
-    # print(f"min near_ir: {near_ir.min()} at: {np.unravel_index(near_ir.argmin(),near_ir.shape)}")
+        near_ir = np.where(near_ir<1,near_ir,1) # Clip values above 1
     ref = client.destagger(source.metadata,scan.field(client.ChanField.REFLECTIVITY))
-    if LIMITS_IRR["reflectivity"] not in [0,None]:
+    if LIMITS_IRR["reflectivity"] not in [0,None]: # Normalize reflectivity channel of image representation to [0,1]
         ref = np.divide(ref,LIMITS_IRR["reflectivity"]) if LIMITS_IRR["reflectivity"] else ref
-        ref = np.where(ref<1,ref,1)
-    # print(f"max ref: {ref.max()} at: {np.unravel_index(ref.argmax(),ref.shape)}")
-    # print(f"min ref: {ref.min()} at: {np.unravel_index(ref.argmin(),ref.shape)}")
+        ref = np.where(ref<1,ref,1) # Clip values above 1
     range_ous = client.destagger(source.metadata,scan.field(client.ChanField.RANGE))
-    if LIMITS_IRR["range"] not in [0,None]:
+    if LIMITS_IRR["range"] not in [0,None]: # Normalize range channel of image representation to [0,1]
         range_ous = np.divide(range_ous,LIMITS_IRR["range"])
-        range_ous = np.where(range_ous<1,range_ous,1)
+        range_ous = np.where(range_ous<1,range_ous,1)# Clip values above 1
     
-    # print(f"max range: {range_ous.max()} at: {np.unravel_index(range_ous.argmax(),range_ous.shape)}")
-    # print(f"min range: {range_ous.min()} at: {np.unravel_index(range_ous.argmin(),range_ous.shape)}")
-    stack = np.stack([near_ir,ref,range_ous],axis=2).astype(np.float32)
+    stack = np.stack([near_ir,ref,range_ous],axis=2).astype(np.float32) # Rebuild image representation
     return stack
 def signal_ref_range(source,scan):
-    
+    """
+    Get the image representaion of current scan as an image with signal, reflectivity and range.
+    @param source: Source object
+    @param scan: Scan object
+    TODO: Generalize this function to be able to create image representations of any combination of channels.
+    """
     signal = client.destagger(source.metadata,scan.field(client.ChanField.SIGNAL))
-    if LIMITS_SRR["signal"] not in [0,None]:
+    if LIMITS_SRR["signal"] not in [0,None]: # Normalize signal channel of image representation to [0,1]
         signal = np.divide(signal,LIMITS_IRR["signal"], dtype=np.float32)
         signal = np.where(signal<1,signal,1)
-    # print(f"max near_ir: {near_ir.max()} at: {np.unravel_index(near_ir.argmax(),near_ir.shape)}")
-    # print(f"min near_ir: {near_ir.min()} at: {np.unravel_index(near_ir.argmin(),near_ir.shape)}")
     ref = client.destagger(source.metadata,scan.field(client.ChanField.REFLECTIVITY))
-    if LIMITS_SRR["reflectivity"] not in [0,None]:
+    if LIMITS_SRR["reflectivity"] not in [0,None]: # Normalize reflectivity channel of image representation to [0,1]
         ref = np.divide(ref,LIMITS_SRR["reflectivity"]) if LIMITS_SRR["reflectivity"] else ref
         ref = np.where(ref<1,ref,1)
-    # print(f"max ref: {ref.max()} at: {np.unravel_index(ref.argmax(),ref.shape)}")
-    # print(f"min ref: {ref.min()} at: {np.unravel_index(ref.argmin(),ref.shape)}")
     range_ous = client.destagger(source.metadata,scan.field(client.ChanField.RANGE))
-    if LIMITS_SRR["range"] not in [0,None]:
+    if LIMITS_SRR["range"] not in [0,None]: # Normalize range channel of image representation to [0,1]
         range_ous = np.divide(range_ous,LIMITS_SRR["range"])
         range_ous = np.where(range_ous<1,range_ous,1)
-    
-    # print(f"max range: {range_ous.max()} at: {np.unravel_index(range_ous.argmax(),range_ous.shape)}")
-    # print(f"min range: {range_ous.min()} at: {np.unravel_index(range_ous.argmin(),range_ous.shape)}")
-    stack = np.stack([signal,ref,range_ous],axis=2).astype(np.float32)
+
+    stack = np.stack([signal,ref,range_ous],axis=2).astype(np.float32) # Rebuild image representation
     return stack
-def record_cv2_images(args):
-    """
-    Stream Live from sensor belonging to hostname, given a specified config.
-    @param config: SensorConfig object
-    @param hostname: string
-    @param lidar_port: int (default 7502)
-    @param imu_port: int (default 7503)
-    """
-    lidar_port = args.lidar_port
-    imu_port = args.imu_port
-    hostname = args.hostname
-    host_ip = args.host_ip
-    frames_to_record = args.frames_to_record
-    #plt.ion()
-    if host_ip is not None:
-        config = sensor_config(hostname=host_ip,lidar_port=lidar_port,imu_port=imu_port)
-        hostname = host_ip
-    elif hostname is not None:
-        config = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
-    # create a stream object
-    print(lidar_port,imu_port,hostname)
-    save_path_IRR = f"../lidarImages/Ir-Ref-Range/{args.scene_name}"
-    save_path_SRR = f"../lidarImages/Signal-Ref-Range/{args.scene_name}"
-    if not os.path.exists(save_path_IRR):
-        os.makedirs(save_path_IRR)
-    else:
-        print(f"{save_path_IRR} already exists")
-        save_path_IRR = f"{save_path_IRR}{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}"
-        print(f"Saving to {save_path_IRR}")
-        os.mkdir(save_path_IRR)
-    if not os.path.exists(save_path_SRR):
-        os.makedirs(save_path_SRR)
-    else:
-        print(f"{save_path_SRR} already exists")
-        save_path_SRR = f"{save_path_SRR}{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}"
-        print(f"Saving to {save_path_SRR}")
-        os.mkdir(save_path_SRR)
-    print(f"Start Lidar Recording: \nInterval {args.time_to_wait} seconds,\nFrames to record {args.frames_to_record}")
-    with closing(client.Scans.stream(hostname, lidar_port,
-                                    complete=True)) as stream:
-        first_scan = next(iter(stream))
-        xyz = get_xyz(stream,first_scan)
-        signal = get_signal_reflection(stream,first_scan)
-        xyzr = convert_to_xyzr(xyz,signal)
-        comp_xyzr = compress_mid_dim(xyzr)
-        comp_xyzr = trim_xyzr(comp_xyzr,[25,25,25])
-        wait_for_input = args.wait_for_input
-        #vis, geo = initialize_o3d_plot(comp_xyzr)
-        limits = LIMITS_IRR
-        prev_time = time.monotonic()
-        # start the stream
-        i = 0
-        imgsz = [1280,640]
-        ttw = args.time_to_wait if args.time_to_wait is not None else 0
-        for scan in stream:
-            if wait_for_input:
-                input("Press Enter to Record...")
-            # uncomment if you'd like to see frame id printed
-            # print("frame id: {} ".format(scan.frame_id))
-            current_time = time.monotonic()
-            if current_time - prev_time > ttw or wait_for_input:
-                prev_time = current_time
-                signal = get_signal_reflection(stream,scan)
-                xyz = get_xyz(stream,scan)
-                xyzr = convert_to_xyzr(xyz,signal)
-                comp_xyzr = compress_mid_dim(xyzr)
-                comp_xyzr = trim_xyzr(comp_xyzr,[limits["range"]/1000,limits["range"]/1000,limits["range"]/1000]) # Convert to meters
-                #update_open3d_live(geo,comp_xyzr,vis)
-                img_IRR = ir_ref_range(stream,scan)
-                img_SRR = signal_ref_range(stream,scan)
-                #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
-                filename = f"{save_path}/image_{i}.jpg"
-                cv2.imwrite(filename,cv2.cvtColor(img_SRR*255,cv2.COLOR_RGB2BGR))
-                cv2.imwrite(filename,cv2.cvtColor(img_IRR*255,cv2.COLOR_RGB2BGR))
+# def record_cv2_images(args):
+#     """
+#     Stream Live from sensor belonging to hostname, given a specified config.
+#     @param args: Arguments from command line
+#     """
+#     lidar_port = args.lidar_port
+#     imu_port = args.imu_port
+#     hostname = args.hostname
+#     host_ip = args.host_ip
+#     frames_to_record = args.frames_to_record
+#     #plt.ion()
+#     if host_ip is not None:
+#         config = sensor_config(hostname=host_ip,lidar_port=lidar_port,imu_port=imu_port)
+#         hostname = host_ip
+#     elif hostname is not None:
+#         config = sensor_config(hostname=hostname,lidar_port=lidar_port,imu_port=imu_port)
+#     # create a stream object
+#     print(lidar_port,imu_port,hostname)
+#     save_path_IRR = f"../lidarImages/Ir-Ref-Range/{args.scene_name}"
+#     save_path_SRR = f"../lidarImages/Signal-Ref-Range/{args.scene_name}"
+#     if not os.path.exists(save_path_IRR):
+#         os.makedirs(save_path_IRR)
+#     else:
+#         print(f"{save_path_IRR} already exists")
+#         save_path_IRR = f"{save_path_IRR}{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+#         print(f"Saving to {save_path_IRR}")
+#         os.mkdir(save_path_IRR)
+#     if not os.path.exists(save_path_SRR):
+#         os.makedirs(save_path_SRR)
+#     else:
+#         print(f"{save_path_SRR} already exists")
+#         save_path_SRR = f"{save_path_SRR}{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+#         print(f"Saving to {save_path_SRR}")
+#         os.mkdir(save_path_SRR)
+#     print(f"Start Lidar Recording: \nInterval {args.time_to_wait} seconds,\nFrames to record {args.frames_to_record}")
+#     with closing(client.Scans.stream(hostname, lidar_port,
+#                                     complete=True)) as stream:
+#         first_scan = next(iter(stream))
+#         xyz = get_xyz(stream,first_scan)
+#         signal = get_signal_reflection(stream,first_scan)
+#         xyzr = convert_to_xyzr(xyz,signal)
+#         comp_xyzr = compress_mid_dim(xyzr)
+#         comp_xyzr = trim_xyzr(comp_xyzr,[25,25,25])
+#         wait_for_input = args.wait_for_input
+#         #vis, geo = initialize_o3d_plot(comp_xyzr)
+#         limits = LIMITS_IRR
+#         prev_time = time.monotonic()
+#         # start the stream
+#         i = 0
+#         imgsz = [1280,640]
+#         ttw = args.time_to_wait if args.time_to_wait is not None else 0
+#         for scan in stream:
+#             if wait_for_input:
+#                 input("Press Enter to Record...")
+#             # uncomment if you'd like to see frame id printed
+#             # print("frame id: {} ".format(scan.frame_id))
+#             current_time = time.monotonic()
+#             if current_time - prev_time > ttw or wait_for_input:
+#                 prev_time = current_time
+#                 signal = get_signal_reflection(stream,scan)
+#                 xyz = get_xyz(stream,scan)
+#                 xyzr = convert_to_xyzr(xyz,signal)
+#                 comp_xyzr = compress_mid_dim(xyzr)
+#                 comp_xyzr = trim_xyzr(comp_xyzr,[limits["range"]/1000,limits["range"]/1000,limits["range"]/1000]) # Convert to meters
+#                 #update_open3d_live(geo,comp_xyzr,vis)
+#                 img_IRR = ir_ref_range(stream,scan)
+#                 img_SRR = signal_ref_range(stream,scan)
+#                 #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
+#                 filename = f"{save_path}/image_{i}.jpg"
+#                 cv2.imwrite(filename,cv2.cvtColor(img_SRR*255,cv2.COLOR_RGB2BGR))
+#                 cv2.imwrite(filename,cv2.cvtColor(img_IRR*255,cv2.COLOR_RGB2BGR))
 
-                cv2.imshow("IRR", cv2.resize(cv2.cvtColor(copy(img_IRR),cv2.COLOR_RGB2BGR),imgsz))
-                cv2.imshow("SRR", cv2.resize(cv2.cvtColor(copy(img_SRR),cv2.COLOR_RGB2BGR),imgsz))
-                cv2.waitKey(1)
-                i += 1
-            else:
-                img_IRR = ir_ref_range(stream,scan)
-                img_SRR = signal_ref_range(stream,scan)
-                #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
-                cv2.imshow("IRR", cv2.resize(cv2.cvtColor(copy(img_IRR),cv2.COLOR_RGB2BGR),imgsz))
-                cv2.imshow("SRR", cv2.resize(cv2.cvtColor(copy(img_IRR),cv2.COLOR_RGB2BGR),imgsz))
-                cv2.waitKey(1)
+#                 cv2.imshow("IRR", cv2.resize(cv2.cvtColor(copy(img_IRR),cv2.COLOR_RGB2BGR),imgsz))
+#                 cv2.imshow("SRR", cv2.resize(cv2.cvtColor(copy(img_SRR),cv2.COLOR_RGB2BGR),imgsz))
+#                 cv2.waitKey(1)
+#                 i += 1
+#             else:
+#                 img_IRR = ir_ref_range(stream,scan)
+#                 img_SRR = signal_ref_range(stream,scan)
+#                 #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
+#                 cv2.imshow("IRR", cv2.resize(cv2.cvtColor(copy(img_IRR),cv2.COLOR_RGB2BGR),imgsz))
+#                 cv2.imshow("SRR", cv2.resize(cv2.cvtColor(copy(img_IRR),cv2.COLOR_RGB2BGR),imgsz))
+#                 cv2.waitKey(1)
 
-            if i>=frames_to_record:
-                break
+#             if i>=frames_to_record:
+#                 break
 
-def count_down():
+def count_down(): # Count down from 3 to 1. Used to give user time to get into position when recording data.
     start = time.monotonic()
     for i in range(3):
         print(3-i)
@@ -756,10 +714,8 @@ def count_down():
 def record_cv2_images_dual(args):
     """
     Stream Live from sensor belonging to hostname, given a specified config.
-    @param config: SensorConfig object
-    @param hostname: string
-    @param lidar_port: int (default 7502)
-    @param imu_port: int (default 7503)
+    @param args: Arguments from command line
+    NOTE: This function was used to record data for training a detection model on these image representations.
     """
     parent_path = "../lidarImages/New-Data"
     lidar_port = args.lidar_port
@@ -777,16 +733,16 @@ def record_cv2_images_dual(args):
     print(lidar_port,imu_port,hostname)
     save_path_IRR = f"{parent_path}/Ir-Ref-Range/{args.scene_name}"
     save_path_SRR = f"{parent_path}/Signal-Ref-Range/{args.scene_name}"
-    if not os.path.exists(save_path_IRR):
+    if not os.path.exists(save_path_IRR): # Create directory to save images of IR-Ref-Range if it doesn't exist
         os.makedirs(save_path_IRR)
-    else:
+    else: # If it already exists, create a new timestamped directory
         print(f"{save_path_IRR} already exists")
         save_path_IRR = f"{save_path_IRR}{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}"
         print(f"Saving to {save_path_IRR}")
         os.mkdir(save_path_IRR)
-    if not os.path.exists(save_path_SRR):
+    if not os.path.exists(save_path_SRR): # Create directory to save images of Signal-Ref-Range if it doesn't exist
         os.makedirs(save_path_SRR)
-    else:
+    else: # If it already exists, create a new timestamped directory
         print(f"{save_path_SRR} already exists")
         save_path_SRR = f"{save_path_SRR}{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}"
         print(f"Saving to {save_path_SRR}")
@@ -795,12 +751,12 @@ def record_cv2_images_dual(args):
     print(f"Start Lidar Recording: \nInterval {args.time_to_wait} seconds,\nFrames to record {args.frames_to_record}")
     with closing(client.Scans.stream(hostname, lidar_port,
                                     complete=True)) as stream:
-        first_scan = next(iter(stream))
-        xyz = get_xyz(stream,first_scan)
-        signal = get_signal_reflection(stream,first_scan)
-        xyzr = convert_to_xyzr(xyz,signal)
-        comp_xyzr = compress_mid_dim(xyzr)
-        comp_xyzr = trim_xyzr(comp_xyzr,[25,25,25])
+        # first_scan = next(iter(stream))
+        # xyz = get_xyz(stream,first_scan)
+        # signal = get_signal_reflection(stream,first_scan)
+        # xyzr = convert_to_xyzr(xyz,signal)
+        # comp_xyzr = compress_mid_dim(xyzr)
+        # comp_xyzr = trim_xyzr(comp_xyzr,[25,25,25])
         wait_for_input = args.wait_for_input
         #vis, geo = initialize_o3d_plot(comp_xyzr)
         #LIMITS_IRR = {"ir":6000,"reflectivity": 255, "range":25000}
@@ -808,38 +764,38 @@ def record_cv2_images_dual(args):
         i = 0
         prev_time = 0
         ttw = args.time_to_wait if args.time_to_wait is not None else 0
-        imgsz = [1280,640]
+        imgsz = [1280,640] # The size of the images to be saved
         if not wait_for_input:
             count_down()
         for scan in stream:
         
             if wait_for_input:
-                input("Press Enter to Record...")
+                input("Press Enter to Record...") # Wait for user to press enter to record single frame
             # uncomment if you'd like to see frame id printed
             # print("frame id: {} ".format(scan.frame_id))
             current_time = time.monotonic()
-            if current_time - prev_time > ttw or wait_for_input:
+            if current_time - prev_time > ttw or wait_for_input: # Only record data every time_to_wait or if wait_for_input is True
                 prev_time = time.monotonic()
+
                 signal = get_signal_reflection(stream,scan)
                 xyz = get_xyz(stream,scan)
                 xyzr = convert_to_xyzr(xyz,signal)
                 comp_xyzr = compress_mid_dim(xyzr)
-                comp_xyzr = trim_xyzr(comp_xyzr,[LIMITS_IRR["range"]/1000,LIMITS_IRR["range"]/1000,LIMITS_IRR["range"]/1000]) # Convert to meters
-                #update_open3d_live(geo,comp_xyzr,vis)
+                # comp_xyzr = trim_xyzr(comp_xyzr,[LIMITS_IRR["range"]/1000,LIMITS_IRR["range"]/1000,LIMITS_IRR["range"]/1000]) # Convert to meters and trim to 25m radius.
                 img_IRR = ir_ref_range(stream,scan)
                 img_SRR = signal_ref_range(stream,scan)
-                #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
-                filename_IRR = f"{save_path_IRR}/image_{i}.jpg"
-                filename_SRR = f"{save_path_SRR}/image_{i}.jpg"
+                # Save images
+                filename_IRR = f"{save_path_IRR}/image_{i}.jpg" 
+                filename_SRR = f"{save_path_SRR}/image_{i}.jpg" 
                 cv2.imwrite(filename_SRR,cv2.resize(cv2.cvtColor(copy(img_SRR)*255,cv2.COLOR_RGB2BGR),imgsz))
                 cv2.imwrite(filename_IRR,cv2.resize(cv2.cvtColor(copy(img_IRR)*255,cv2.COLOR_RGB2BGR),imgsz))
-
+                # Visualize images
                 cv2.imshow("IRR", cv2.resize(cv2.cvtColor(copy(img_IRR),cv2.COLOR_RGB2BGR),imgsz))
                 cv2.imshow("SRR", cv2.resize(cv2.cvtColor(copy(img_SRR),cv2.COLOR_RGB2BGR),imgsz))
                 cv2.waitKey(1)
-                i += 1
+                i += 1 # Increment frame counter
                 print(f"Recorded frame {i}/{frames_to_record}")
-            else:
+            else: # Only visualize data
                 img_IRR = ir_ref_range(stream,scan)
                 img_SRR = signal_ref_range(stream,scan)
                 #print(f"Average: \nIR {np.mean(img[:,:,0])} \nRange {np.mean(img[:,:,1])} \nReflectivity {np.mean(img[:,:,2])}")
@@ -885,14 +841,8 @@ def parse_config():
 
 if __name__ == "__main__":
     #stream_from_multiple(parse_config()) # py utils_ouster.py --lidar_port 7502 7504 --imu_port 7503 7505  --host_ip 192.168.200.78 192.168.200.79 --stream_time 500 --relative_position 0 0 0 --relative_position -4.40 0 0
-    record_cv2_images_dual(parse_config()) # py utils_ouster.py --host_ip "192.168.200.79" --lidar_port 7504 --imu_port 7505 --scene_name "GreenHouseNK2" --frames_to_record 35 --time_to_wait 1.5 --no-wait_for_input
+    
+    args = parse_config()
+    record_cv2_images_dual(args) # py utils_ouster.py --host_ip "192.168.200.79" --lidar_port 7504 --imu_port 7505 --scene_name "GreenHouseNK2" --frames_to_record 35 --time_to_wait 1.5 --no-wait_for_input
     #python3 utils_ouster.py --scene_name "Testing" --no-wait_for_input --time_to_wait 4 --frames_to_record 10
     #filename,_ = record_lidar_seq(seq_length=5)
-    #filename = "../lidar_scans/Huuuman"
-    #print("filename: {}".format(filename))
-    #play_back_recording(filename,trim=[10,10,10])
-    #scan,source = get_single_example()
-    #xyz = get_xyz(source,scan)
-    #signal = get_signal_reflection(scan,source)
-    #xyzr = convert_to_xyzr(xyz,signal)
-    #plot_open3d_pc(compress_mid_dim(xyzr))
